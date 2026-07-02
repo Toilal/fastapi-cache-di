@@ -396,9 +396,11 @@ lint = [
 ]
 test = [
     { name = "httpx" },
+    { name = "mypy" },
     { name = "pytest" },
     { name = "pytest-benchmark" },
     { name = "pytest-cov" },
+    { name = "ruff" },
     { name = "uvicorn" },
 ]
 
@@ -426,9 +428,11 @@ lint = [
 ]
 test = [
     { name = "httpx" },
+    { name = "mypy" },
     { name = "pytest" },
     { name = "pytest-benchmark" },
     { name = "pytest-cov" },
+    { name = "ruff" },
     { name = "uvicorn" },
 ]
 

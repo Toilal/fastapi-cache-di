@@ -26,25 +26,38 @@ uv add fastapi-cache-di
 Wrap the code that loads your routes with the context manager:
 
 ```python
-from fastapi import FastAPI
+from fastapi import APIRouter, FastAPI
+
 from fastapi_cache_di import fastapi_deps_cache
 
 app = FastAPI()
+users = APIRouter()
+orders = APIRouter()
+billing = APIRouter()
 
 with fastapi_deps_cache():
-    from myapp.routers import users, orders, billing  # importing registers routes
-    app.include_router(users.router)
-    app.include_router(orders.router)
-    app.include_router(billing.router)
+    # Registering routes introspects each dependency tree; caching is active here.
+    app.include_router(users)
+    app.include_router(orders)
+    app.include_router(billing)
 # originals restored here; cache memory freed
 ```
 
 Or patch/unpatch manually (call `patch` **before** routes are loaded):
 
 ```python
+from fastapi import FastAPI
+
 from fastapi_cache_di import patch_fastapi_deps_cache, unpatch_fastapi_deps_cache
 
-patch_fastapi_deps_cache()
+
+def load_all_routes(app: FastAPI) -> None:
+    """Register the application's routers (introspection happens here)."""
+
+
+app = FastAPI()
+
+patch_fastapi_deps_cache()  # call before any routes are loaded
 try:
     load_all_routes(app)
 finally:
@@ -54,12 +67,22 @@ finally:
 ### Sharing / inspecting the cache
 
 ```python
+from fastapi import FastAPI
+
 from fastapi_cache_di import DepsCache, fastapi_deps_cache
 
+
+def load_all_routes(app: FastAPI) -> None:
+    """Register the application's routers (introspection happens here)."""
+
+
+app = FastAPI()
 cache = DepsCache()
+
 with fastapi_deps_cache(deps_cache=cache):
     load_all_routes(app)
 
+# The cache survives the context, so you can inspect what was memoized.
 print(len(cache.dependants), len(cache.flat_dependants))
 ```
 
@@ -85,7 +108,7 @@ generation) bypass the cache since they depend on a mutable `visited` list.
 ## Requirements
 
 - Python ≥ 3.12
-- FastAPI ≥ 0.135
+- FastAPI ≥ 0.112.4
 
 ## Development
 
