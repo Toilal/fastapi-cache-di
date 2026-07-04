@@ -91,22 +91,35 @@ def _cached_get_typed_signature(call: Callable[..., Any]) -> inspect.Signature:
 # ---------------------------------------------------------------------------
 
 
+def _sorted_stable(items: Any) -> list[Any]:
+    """Sort ``items`` deterministically, tolerating non-orderable elements.
+
+    Falls back to ordering by ``repr`` when the elements are mutually
+    incomparable (e.g. a heterogeneous ``set``), so the caller never raises.
+    """
+    materialized = list(items)
+    try:
+        return sorted(materialized)
+    except TypeError:
+        return sorted(materialized, key=repr)
+
+
 def _hashable(value: Any) -> Any:
     """Coerce a kwarg value into something usable inside a cache key.
 
     Today ``get_dependant``'s extra kwargs are scope-related (``str`` and
     ``list``), all already hashable once lists become tuples. This stays
     defensive against any future unhashable kwarg value: ``list``/``tuple`` are
-    recursed element-wise, ``set``/``frozenset`` become a sorted tuple, and
-    ``dict`` a sorted tuple of coerced items. Anything still unhashable falls
-    back to its ``repr`` so key construction never raises.
+    recursed element-wise, ``set``/``frozenset`` become a stably-sorted tuple,
+    and ``dict`` a stably-sorted tuple of coerced items. Anything still
+    unhashable falls back to its ``repr`` so key construction never raises.
     """
     if isinstance(value, (list, tuple)):
         return tuple(_hashable(v) for v in value)
     if isinstance(value, (set, frozenset)):
-        return tuple(sorted(_hashable(v) for v in value))
+        return tuple(_sorted_stable(_hashable(v) for v in value))
     if isinstance(value, dict):
-        return tuple(sorted((k, _hashable(v)) for k, v in value.items()))
+        return tuple(_sorted_stable((k, _hashable(v)) for k, v in value.items()))
     try:
         hash(value)
     except TypeError:
