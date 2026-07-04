@@ -72,6 +72,8 @@ packages = ["src/fastapi_cache_di"]
 path = "hatch_build.py"
 
 [tool.semantic_release]
+# Stay on the 0.x line: without this, the first release is forced to 1.0.0.
+allow_zero_version = true
 version_variables = ["src/fastapi_cache_di/__init__.py:__version__"]
 version_toml = ["pyproject.toml:project.version"]
 commit_message = "chore(release): release v{version}"
