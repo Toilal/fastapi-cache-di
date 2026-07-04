@@ -125,6 +125,44 @@ class TestNoCrossRouteDependencyLeak:
         assert _route_dep_calls(app, "/guarded") == ["guard"]
         assert _route_dep_calls(app, "/open") == []
 
+    def test_route_level_security_requirements_do_not_accumulate(self) -> None:
+        """Two routes sharing one Security dependency must not have its security
+        requirement duplicated under the cache (FastAPI < 0.121 appends to the
+        returned dependant's ``security_requirements`` list)."""
+        from fastapi.security import OAuth2PasswordBearer
+
+        scheme = OAuth2PasswordBearer(tokenUrl="token", auto_error=False)
+
+        def endpoint() -> dict[str, str]:
+            return {}
+
+        def security_req_counts(app: FastAPI, path: str) -> list[int]:
+            route = next(
+                r for r in app.routes if isinstance(r, APIRoute) and r.path == path
+            )
+            return [
+                len(getattr(d, "security_requirements", []))
+                for d in route.dependant.dependencies
+            ]
+
+        def build(*, cache: bool) -> FastAPI:
+            app = FastAPI()
+            with fastapi_deps_cache(deps_cache=cache):
+                app.add_api_route(
+                    "/one", endpoint, dependencies=[Security(scheme, scopes=["read"])]
+                )
+                app.add_api_route(
+                    "/two", endpoint, dependencies=[Security(scheme, scopes=["read"])]
+                )
+            return app
+
+        uncached = build(cache=False)
+        cached = build(cache=True)
+        for path in ("/one", "/two"):
+            assert security_req_counts(cached, path) == security_req_counts(
+                uncached, path
+            )
+
     def test_use_cache_false_dependency_isolated(self) -> None:
         def dep_x() -> None: ...
         def dep_y() -> None: ...
