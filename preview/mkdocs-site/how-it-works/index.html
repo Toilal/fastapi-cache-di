@@ -1,0 +1,676 @@
+
+<!doctype html>
+<html lang="en" class="no-js">
+  <head>
+    
+      <meta charset="utf-8">
+      <meta name="viewport" content="width=device-width,initial-scale=1">
+      
+        <meta name="description" content="Speed up FastAPI startup by caching dependency-tree introspection.">
+      
+      
+        <meta name="author" content="Rémi Alvergnat <toilal.dev@gmail.com>">
+      
+      
+        <link rel="canonical" href="https://toilal.github.io/fastapi-cache-di/how-it-works/">
+      
+      
+        <link rel="prev" href="../usage/">
+      
+      
+        <link rel="next" href="../api/">
+      
+      
+        
+      
+      
+      <link rel="icon" href="../assets/images/favicon.png">
+      <meta name="generator" content="zensical-0.0.46">
+    
+    
+      
+        <title>How it works - FastAPI Cache DI</title>
+      
+    
+    
+      
+        
+      
+      <link rel="stylesheet" href="../assets/stylesheets/modern/main.19d3147f.min.css">
+      
+      
+
+
+    
+    
+      
+    
+    
+      
+        
+        
+        <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+        <link rel="stylesheet" href="https://fonts.googleapis.com/css?family=Inter:300,300i,400,400i,500,500i,700,700i%7CJetBrains+Mono:400,400i,700,700i&amp;display=fallback">
+        <style>:root{--md-text-font:"Inter";--md-code-font:"JetBrains Mono"}</style>
+      
+    
+    
+    <script>__md_scope=new URL("..",location),__md_scope.pathname.endsWith("/")||(__md_scope=new URL(__md_scope.pathname+"/",location)),__md_hash=e=>[...e].reduce(((e,t)=>(e<<5)-e+t.charCodeAt(0)),0),__md_get=(e,t=localStorage,_=__md_scope)=>JSON.parse(t.getItem(_.pathname+"."+e)),__md_set=(e,t,_=localStorage,a=__md_scope)=>{try{_.setItem(a.pathname+"."+e,JSON.stringify(t))}catch(e){}},document.documentElement.setAttribute("data-platform",navigator.platform)</script>
+    
+      
+
+    
+    
+  </head>
+  
+  
+    <body dir="ltr">
+  
+    
+    <input class="md-toggle" data-md-toggle="drawer" type="checkbox" id="__drawer" autocomplete="off">
+    <input class="md-toggle" data-md-toggle="search" type="checkbox" id="__search" autocomplete="off">
+    <label class="md-overlay" for="__drawer" aria-label="Navigation"></label>
+    <div data-md-component="skip">
+      
+        
+        <a href="#how-it-works" class="md-skip">
+          Skip to content
+        </a>
+      
+    </div>
+    <div data-md-component="announce">
+      
+    </div>
+    
+    
+      
+
+  
+
+<header class="md-header md-header--shadow" data-md-component="header">
+  <nav class="md-header__inner md-grid" aria-label="Header">
+    <a href="./.." title="FastAPI Cache DI" class="md-header__button md-logo" aria-label="FastAPI Cache DI" data-md-component="logo">
+      
+  
+  <svg xmlns="http://www.w3.org/2000/svg" fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round" stroke-width="2" class="lucide lucide-book-open" viewBox="0 0 24 24"><path d="M12 7v14M3 18a1 1 0 0 1-1-1V4a1 1 0 0 1 1-1h5a4 4 0 0 1 4 4 4 4 0 0 1 4-4h5a1 1 0 0 1 1 1v13a1 1 0 0 1-1 1h-6a3 3 0 0 0-3 3 3 3 0 0 0-3-3z"/></svg>
+
+    </a>
+    <label class="md-header__button md-icon" for="__drawer" aria-label="Navigation">
+      
+      <svg xmlns="http://www.w3.org/2000/svg" fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round" stroke-width="2" class="lucide lucide-menu" viewBox="0 0 24 24"><path d="M4 5h16M4 12h16M4 19h16"/></svg>
+    </label>
+    <div class="md-header__title" data-md-component="header-title">
+      <div class="md-header__ellipsis">
+        <div class="md-header__topic">
+          <span class="md-ellipsis">
+            FastAPI Cache DI
+          </span>
+        </div>
+        <div class="md-header__topic" data-md-component="header-topic">
+          <span class="md-ellipsis">
+            
+              How it works
+            
+          </span>
+        </div>
+      </div>
+    </div>
+    
+    
+      <script>var palette=__md_get("__palette");if(palette&&palette.color){if("(prefers-color-scheme)"===palette.color.media){var media=matchMedia("(prefers-color-scheme: light)"),input=document.querySelector(media.matches?"[data-md-color-media='(prefers-color-scheme: light)']":"[data-md-color-media='(prefers-color-scheme: dark)']");palette.color.media=input.getAttribute("data-md-color-media"),palette.color.scheme=input.getAttribute("data-md-color-scheme"),palette.color.primary=input.getAttribute("data-md-color-primary"),palette.color.accent=input.getAttribute("data-md-color-accent")}for(var[key,value]of Object.entries(palette.color))document.body.setAttribute("data-md-color-"+key,value)}</script>
+    
+    
+    
+      
+      
+        <label class="md-header__button md-icon" for="__search" aria-label="Search">
+          
+          <svg xmlns="http://www.w3.org/2000/svg" fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round" stroke-width="2" class="lucide lucide-search" viewBox="0 0 24 24"><path d="m21 21-4.34-4.34"/><circle cx="11" cy="11" r="8"/></svg>
+        </label>
+        <div class="md-search" data-md-component="search" role="dialog" aria-label="Search">
+  <button type="button" class="md-search__button">
+    Search
+  </button>
+</div>
+      
+    
+    <div class="md-header__source">
+      
+        <a href="https://github.com/Toilal/fastapi-cache-di" title="Go to repository" class="md-source" data-md-component="source">
+  <div class="md-source__icon md-icon">
+    
+    <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 448 512"><!--! Font Awesome Free 7.2.0 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2026 Fonticons, Inc.--><path fill="currentColor" d="M439.6 236.1 244 40.5c-5.4-5.5-12.8-8.5-20.4-8.5s-15 3-20.4 8.4L162.5 81l51.5 51.5c27.1-9.1 52.7 16.8 43.4 43.7l49.7 49.7c34.2-11.8 61.2 31 35.5 56.7-26.5 26.5-70.2-2.9-56-37.3L240.3 199v121.9c25.3 12.5 22.3 41.8 9.1 55-6.4 6.4-15.2 10.1-24.3 10.1s-17.8-3.6-24.3-10.1c-17.6-17.6-11.1-46.9 11.2-56v-123c-20.8-8.5-24.6-30.7-18.6-45L142.6 101 8.5 235.1C3 240.6 0 247.9 0 255.5s3 15 8.5 20.4l195.6 195.7c5.4 5.4 12.7 8.4 20.4 8.4s15-3 20.4-8.4l194.7-194.7c5.4-5.4 8.4-12.8 8.4-20.4s-3-15-8.4-20.4"/></svg>
+  </div>
+  <div class="md-source__repository">
+    GitHub
+  </div>
+</a>
+      
+    </div>
+  </nav>
+  
+</header>
+    
+    <div class="md-container" data-md-component="container">
+      
+      
+        
+          
+        
+      
+      <main class="md-main" data-md-component="main">
+        <div class="md-main__inner md-grid">
+          
+            
+              
+              <div class="md-sidebar md-sidebar--primary" data-md-component="sidebar" data-md-type="navigation" >
+                <div class="md-sidebar__scrollwrap">
+                  <div class="md-sidebar__inner">
+                    
+
+
+
+<nav class="md-nav md-nav--primary" aria-label="Navigation" data-md-level="0">
+  <label class="md-nav__title" for="__drawer">
+    <a href="./.." title="FastAPI Cache DI" class="md-nav__button md-logo" aria-label="FastAPI Cache DI" data-md-component="logo">
+      
+  
+  <svg xmlns="http://www.w3.org/2000/svg" fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round" stroke-width="2" class="lucide lucide-book-open" viewBox="0 0 24 24"><path d="M12 7v14M3 18a1 1 0 0 1-1-1V4a1 1 0 0 1 1-1h5a4 4 0 0 1 4 4 4 4 0 0 1 4-4h5a1 1 0 0 1 1 1v13a1 1 0 0 1-1 1h-6a3 3 0 0 0-3 3 3 3 0 0 0-3-3z"/></svg>
+
+    </a>
+    FastAPI Cache DI
+  </label>
+  
+    <div class="md-nav__source">
+      <a href="https://github.com/Toilal/fastapi-cache-di" title="Go to repository" class="md-source" data-md-component="source">
+  <div class="md-source__icon md-icon">
+    
+    <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 448 512"><!--! Font Awesome Free 7.2.0 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2026 Fonticons, Inc.--><path fill="currentColor" d="M439.6 236.1 244 40.5c-5.4-5.5-12.8-8.5-20.4-8.5s-15 3-20.4 8.4L162.5 81l51.5 51.5c27.1-9.1 52.7 16.8 43.4 43.7l49.7 49.7c34.2-11.8 61.2 31 35.5 56.7-26.5 26.5-70.2-2.9-56-37.3L240.3 199v121.9c25.3 12.5 22.3 41.8 9.1 55-6.4 6.4-15.2 10.1-24.3 10.1s-17.8-3.6-24.3-10.1c-17.6-17.6-11.1-46.9 11.2-56v-123c-20.8-8.5-24.6-30.7-18.6-45L142.6 101 8.5 235.1C3 240.6 0 247.9 0 255.5s3 15 8.5 20.4l195.6 195.7c5.4 5.4 12.7 8.4 20.4 8.4s15-3 20.4-8.4l194.7-194.7c5.4-5.4 8.4-12.8 8.4-20.4s-3-15-8.4-20.4"/></svg>
+  </div>
+  <div class="md-source__repository">
+    GitHub
+  </div>
+</a>
+    </div>
+  
+  <ul class="md-nav__list" data-md-scrollfix>
+    
+      
+      
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="./.." class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+  Home
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../usage/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+  Usage
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+    
+      
+      
+  
+  
+    
+  
+  
+  
+    <li class="md-nav__item md-nav__item--active">
+      
+      
+      
+      
+        
+      
+      
+        <label class="md-nav__link md-nav__link--active" for="__toc">
+          
+  
+  
+  <span class="md-ellipsis">
+    
+  
+  How it works
+
+    
+  </span>
+  
+  
+
+          <span class="md-nav__icon md-icon"></span>
+        </label>
+      
+      <a href="././" class="md-nav__link md-nav__link--active">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+  How it works
+
+    
+  </span>
+  
+  
+
+      </a>
+      
+        
+
+
+<nav class="md-nav md-nav--secondary" aria-label="On this page">
+  
+  
+  
+    
+  
+  
+    <label class="md-nav__title" for="__toc">
+      <span class="md-nav__icon md-icon"></span>
+      On this page
+    </label>
+    <ul class="md-nav__list" data-md-component="toc" data-md-scrollfix>
+      
+        <li class="md-nav__item">
+  <a href="#the-three-cached-functions" class="md-nav__link">
+    <span class="md-ellipsis">
+      <span class="md-typeset">
+        The three cached functions
+      </span>
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#where-the-patch-is-applied" class="md-nav__link">
+    <span class="md-ellipsis">
+      <span class="md-typeset">
+        Where the patch is applied
+      </span>
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#copy-on-return-semantics" class="md-nav__link">
+    <span class="md-ellipsis">
+      <span class="md-typeset">
+        Copy-on-return semantics
+      </span>
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#cache-key-subtleties" class="md-nav__link">
+    <span class="md-ellipsis">
+      <span class="md-typeset">
+        Cache-key subtleties
+      </span>
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#id-recycling-protection" class="md-nav__link">
+    <span class="md-ellipsis">
+      <span class="md-typeset">
+        <code>id()</code> recycling protection
+      </span>
+    </span>
+  </a>
+  
+</li>
+      
+    </ul>
+  
+</nav>
+      
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../api/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+  API reference
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+    
+  </ul>
+</nav>
+                  </div>
+                </div>
+              </div>
+            
+            
+              
+              <div class="md-sidebar md-sidebar--secondary" data-md-component="sidebar" data-md-type="toc" >
+                <div class="md-sidebar__scrollwrap">
+                  
+                    
+                    
+                    
+                      
+                    
+                    
+                      <input class="md-nav__toggle md-toggle" type="checkbox" id="__toc">
+                      <div class="md-sidebar-button__wrapper">
+                        <label class="md-sidebar-button" for="__toc"></label>
+                      </div>
+                    
+                  
+                  <div class="md-sidebar__inner">
+                    
+
+
+<nav class="md-nav md-nav--secondary" aria-label="On this page">
+  
+  
+  
+    
+  
+  
+    <label class="md-nav__title" for="__toc">
+      <span class="md-nav__icon md-icon"></span>
+      On this page
+    </label>
+    <ul class="md-nav__list" data-md-component="toc" data-md-scrollfix>
+      
+        <li class="md-nav__item">
+  <a href="#the-three-cached-functions" class="md-nav__link">
+    <span class="md-ellipsis">
+      <span class="md-typeset">
+        The three cached functions
+      </span>
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#where-the-patch-is-applied" class="md-nav__link">
+    <span class="md-ellipsis">
+      <span class="md-typeset">
+        Where the patch is applied
+      </span>
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#copy-on-return-semantics" class="md-nav__link">
+    <span class="md-ellipsis">
+      <span class="md-typeset">
+        Copy-on-return semantics
+      </span>
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#cache-key-subtleties" class="md-nav__link">
+    <span class="md-ellipsis">
+      <span class="md-typeset">
+        Cache-key subtleties
+      </span>
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#id-recycling-protection" class="md-nav__link">
+    <span class="md-ellipsis">
+      <span class="md-typeset">
+        <code>id()</code> recycling protection
+      </span>
+    </span>
+  </a>
+  
+</li>
+      
+    </ul>
+  
+</nav>
+                  </div>
+                </div>
+              </div>
+            
+          
+          
+            <div class="md-content" data-md-component="content">
+              
+              <article class="md-content__inner md-typeset">
+                
+                  
+  
+  
+
+
+<h1 id="how-it-works">How it works<a class="headerlink" href="#how-it-works" title="Permanent link">&para;</a></h1>
+<p><code>patch_fastapi_deps_cache()</code> replaces three functions in
+<code>fastapi.dependencies.utils</code> (plus the <code>fastapi.routing</code> and
+<code>fastapi.openapi.utils</code> re-imports) with caching wrappers backed by a
+<a href=".././api/#depscache"><code>DepsCache</code></a>. <code>unpatch_fastapi_deps_cache()</code> restores the
+originals.</p>
+<h2 id="the-three-cached-functions">The three cached functions<a class="headerlink" href="#the-three-cached-functions" title="Permanent link">&para;</a></h2>
+<p>FastAPI introspects every route's dependency tree at startup with no caching.
+Shared dependencies (an auth check, a DB handle, a role guard …) are
+re-introspected from scratch for every route that uses them. The three functions
+on that hot path, and how each is keyed:</p>
+<table>
+<thead>
+<tr>
+<th>Function</th>
+<th>Cache key</th>
+<th>Why</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>get_typed_signature</code></td>
+<td><code>id(call)</code></td>
+<td>avoid repeated signature parsing</td>
+</tr>
+<tr>
+<td><code>get_dependant</code></td>
+<td><code>(id(call), path params, name, use_cache, scope kwargs)</code></td>
+<td>avoid redundant tree introspection</td>
+</tr>
+<tr>
+<td><code>get_flat_dependant</code></td>
+<td><code>(id(dependant), parent_oauth_scopes)</code></td>
+<td>the dominant startup cost</td>
+</tr>
+</tbody>
+</table>
+<p><code>get_flat_dependant</code> is the dominant cost: FastAPI calls it once per route in
+<code>APIRoute.__init__</code> to flatten the dependency tree, recursing through every
+sub-dependency without caching. Caching the recursive results turns
+<code>O(routes × tree-depth)</code> into <code>O(routes + unique-deps)</code>.</p>
+<h2 id="where-the-patch-is-applied">Where the patch is applied<a class="headerlink" href="#where-the-patch-is-applied" title="Permanent link">&para;</a></h2>
+<p>Each function is patched in every module that holds its own reference:</p>
+<ul>
+<li><strong><code>get_typed_signature</code></strong> — patched in <code>fastapi.dependencies.utils</code> only
+  (that is the sole caller).</li>
+<li><strong><code>get_dependant</code></strong> — patched in <code>fastapi.dependencies.utils</code> (for the
+  recursive calls) and in <code>fastapi.routing</code> (which imports its own reference).</li>
+<li><strong><code>get_flat_dependant</code></strong> — patched in <code>fastapi.dependencies.utils</code>
+  (self-recursive calls), <code>fastapi.openapi.utils</code> (all versions), and
+  <code>fastapi.routing</code>. <code>routing</code> only imports <code>get_flat_dependant</code> from FastAPI
+  0.112.4 onwards, so it is patched there only if present (and remembered, to be
+  restored on unpatch).</li>
+</ul>
+<p>The <code>openapi.utils</code> patch is effectively a no-op on current FastAPI: both call
+sites there pass <code>skip_repeats=True</code>, which the wrapper short-circuits straight
+to the original without caching. It is installed for symmetry and as a safety
+net.</p>
+<h2 id="copy-on-return-semantics">Copy-on-return semantics<a class="headerlink" href="#copy-on-return-semantics" title="Permanent link">&para;</a></h2>
+<p>Some <code>Dependant</code> list fields are mutated by FastAPI <strong>after</strong> introspection
+returns (route-level parameterless dependencies inserted during routing, and on
+FastAPI &lt; 0.121 <code>security_requirements</code>). Handing back the shared cached object
+would leak one route's mutations into every sibling that reuses the same cached
+entry.</p>
+<p>To stay safe, the wrappers shallow-copy the returned <code>Dependant</code> and give it
+private copies of the mutated list <em>containers</em>:</p>
+<ul>
+<li><code>get_flat_dependant</code> results are shallow-copied on the way out, with private
+  copies of <code>path_params</code>, <code>query_params</code>, <code>header_params</code>, <code>cookie_params</code>,
+  <code>body_params</code> and <code>dependencies</code>.</li>
+<li><code>get_dependant</code> copies the mutated fields (<code>dependencies</code>,
+  <code>security_requirements</code>) only for the <strong>top-level</strong> path-operation dependant
+  (<code>name is None</code>), which FastAPI mutates in place. Named sub-dependants are
+  never mutated and keep their cached identity — that identity is what makes the
+  recursive sub-dependency sharing work.</li>
+</ul>
+<p>Only the list <em>containers</em> are private; their elements (<code>ModelField</code> and
+sub-<code>Dependant</code> objects) remain shared references. Appending to or reordering a
+returned list is safe; mutating an element in place is not.</p>
+<h2 id="cache-key-subtleties">Cache-key subtleties<a class="headerlink" href="#cache-key-subtleties" title="Permanent link">&para;</a></h2>
+<ul>
+<li><strong><code>get_dependant</code></strong> folds in only the path <em>param names</em>, not the literal path
+  string. Two routes with the same param names but different literals
+  (<code>/a/{id}</code> vs <code>/b/{id}</code>) deliberately share one cached <code>Dependant</code> — this is
+  what makes cross-route sharing effective. A consequence is that the shared
+  object's <code>.path</code> reflects whichever route populated it first; FastAPI reads
+  <code>.path</code> only for diagnostics, never for routing, so the staleness is cosmetic.</li>
+<li>The scope-related keyword arguments of <code>get_dependant</code> and <code>get_flat_dependant</code>
+  changed across FastAPI versions. They are captured generically via <code>**kwargs</code>
+  and folded into the key, so the wrappers stay compatible across the supported
+  FastAPI range.</li>
+<li>Calls with <code>skip_repeats=True</code> (OpenAPI generation) bypass the cache since they
+  depend on a mutable <code>visited</code> list, and are not a startup bottleneck anyway.</li>
+</ul>
+<h2 id="id-recycling-protection"><code>id()</code> recycling protection<a class="headerlink" href="#id-recycling-protection" title="Permanent link">&para;</a></h2>
+<p>The signature and dependant caches key on <code>id(call)</code> / <code>id(dependant)</code> — the
+object's memory address. Python recycles <code>id()</code> after an object is garbage
+collected, so a short-lived callable could be collected and a later object
+allocated at the same address, then wrongly served the dead object's cached
+entry. <code>DepsCache</code> holds a strong reference to every keyed object (via
+<code>keep_alive</code>) so its address stays reserved for the cache's lifetime.</p>
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+                
+              </article>
+            </div>
+          
+          
+<script>var target=document.getElementById(location.hash.slice(1));target&&target.name&&(target.checked=target.name.startsWith("__tabbed_"))</script>
+        </div>
+        
+      </main>
+      
+        <footer class="md-footer">
+  
+  <div class="md-footer-meta md-typeset">
+    <div class="md-footer-meta__inner md-grid">
+      <div class="md-copyright">
+  
+  
+    Made with
+    <a href="https://zensical.org/" target="_blank" rel="noopener">
+      Zensical
+    </a>
+  
+</div>
+      
+    </div>
+  </div>
+</footer>
+      
+    </div>
+    <div class="md-dialog" data-md-component="dialog">
+      <div class="md-dialog__inner md-typeset"></div>
+    </div>
+    
+    
+    
+      
+      
+      <script id="__config" type="application/json">{"annotate":null,"base":"..","features":[],"search":"../assets/javascripts/workers/search.b6b7e04f.min.js","tags":null,"translations":{"clipboard.copied":"Copied to clipboard","clipboard.copy":"Copy to clipboard","search.result.more.one":"1 more on this page","search.result.more.other":"# more on this page","search.result.none":"No matching documents","search.result.one":"1 matching document","search.result.other":"# matching documents","search.result.placeholder":"Type to start searching","search.result.term.missing":"Missing","select.version":"Select version"},"version":null}</script>
+    
+    
+      <script src="../assets/javascripts/bundle.ee611ef6.min.js"></script>
+      
+    
+  </body>
+</html>
