@@ -114,6 +114,13 @@ generation) bypass the cache since they depend on a mutable `visited` list.
 > patch is already active keeps the existing cache and logs a warning — the new
 > cache is ignored until you `unpatch` first.
 
+## Documentation
+
+Full documentation is published at
+**<https://toilal.github.io/fastapi-cache-di>** (usage guide, internals, and API
+reference). The in-progress `develop` build is previewed at
+<https://toilal.github.io/fastapi-cache-di/dev/>.
+
 ## Requirements
 
 - Python ≥ 3.12
