@@ -356,8 +356,13 @@ def fastapi_deps_cache(
         yield
         return
     dc = deps_cache if isinstance(deps_cache, DepsCache) else None
-    patch_fastapi_deps_cache(deps_cache=dc)
+    # Only tear down what this context installed. patch_fastapi_deps_cache is a
+    # no-op returning False when caching is already active (a nested context or
+    # an earlier manual patch), so a nested/inner block must not unpatch and
+    # destroy the still-wanted outer cache.
+    patched = patch_fastapi_deps_cache(deps_cache=dc)
     try:
         yield
     finally:
-        unpatch_fastapi_deps_cache()
+        if patched:
+            unpatch_fastapi_deps_cache()
