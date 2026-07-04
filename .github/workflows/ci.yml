@@ -75,7 +75,10 @@ jobs:
         run: uv pip install "fastapi==${{ matrix.fastapi-version }}"
 
       - name: Test
-        run: uv run --no-sync pytest
+        # Exclude the timing-sensitive startup benchmark; it is gated once, on
+        # the current FastAPI, in the dedicated `benchmark` job. Replicating it
+        # across the version matrix on shared runners only adds flakiness.
+        run: uv run --no-sync pytest -m "not benchmark"
 
   pre-commit:
     if: github.event_name == 'push' || github.event.pull_request.head.repo.full_name != github.repository
