@@ -452,6 +452,18 @@ class TestHashable:
         # A dict nesting an unhashable value must still yield a hashable key.
         hash(_hashable({"scopes": {"read", "write"}}))
 
+    def test_heterogeneous_set_does_not_raise(self) -> None:
+        # Mutually non-orderable elements must not blow up key construction.
+        result = _hashable({1, "a", (2, 3)})
+        hash(result)
+        # Deterministic: same input yields the same coerced key.
+        assert result == _hashable({"a", (2, 3), 1})
+
+    def test_heterogeneous_dict_keys_do_not_raise(self) -> None:
+        result = _hashable({1: "x", "a": "y"})
+        hash(result)
+        assert result == _hashable({"a": "y", 1: "x"})
+
     def test_plain_hashable_passthrough(self) -> None:
         assert _hashable("scope") == "scope"
 
