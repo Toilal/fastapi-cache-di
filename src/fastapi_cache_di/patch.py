@@ -121,10 +121,19 @@ def _cached_get_dependant(
         extra,
     )
 
+    # The top-level path-operation dependant (``name is None``) is mutated in
+    # place by FastAPI: ``_build_dependant_with_parameterless_dependencies``
+    # inserts each route's ``dependencies=[...]`` straight into
+    # ``dependant.dependencies``. Handing back the shared cached object would
+    # leak one route's dependencies into every sibling reusing the same
+    # endpoint callable. Return a copy so that mutation targets a private list.
+    # Named sub-dependants (``name`` set) are never mutated and must keep their
+    # cached identity (relied on by the recursive sub-dependency sharing), so
+    # they are returned as-is.
     cached = _active_cache.dependants.get(cache_key)
     if cached is not None:
         _dep_hits += 1
-        return cached
+        return _copy_dependant(cached) if name is None else cached
 
     _dep_misses += 1
     result = _original_get_dependant(
@@ -133,7 +142,7 @@ def _cached_get_dependant(
     _active_cache.dependants[cache_key] = result
     # ``id(call)`` is part of ``cache_key``; pin it against GC address reuse.
     _active_cache.keep_alive(call)
-    return result
+    return _copy_dependant(result) if name is None else result
 
 
 # ---------------------------------------------------------------------------
@@ -141,7 +150,7 @@ def _cached_get_dependant(
 # ---------------------------------------------------------------------------
 
 
-_FLAT_LIST_FIELDS = (
+_DEPENDANT_LIST_FIELDS = (
     "path_params",
     "query_params",
     "header_params",
@@ -151,15 +160,16 @@ _FLAT_LIST_FIELDS = (
 )
 
 
-def _copy_flat_dependant(d: Dependant) -> Dependant:
-    """Shallow-copy a flattened Dependant so callers can safely extend its lists.
+def _copy_dependant(d: Dependant) -> Dependant:
+    """Shallow-copy a Dependant so callers can safely extend its mutable lists.
 
-    Copied field-agnostically (``copy.copy`` + re-copy of the mutable list
-    attributes) so it works whether ``Dependant`` is a plain class or a
+    ``copy.copy`` then re-copy each mutable list attribute, giving the caller
+    private lists while every sub-``Dependant`` keeps its cached identity. Done
+    field-agnostically so it works whether ``Dependant`` is a plain class or a
     dataclass, and regardless of which fields a given FastAPI version defines.
     """
     clone = copy.copy(d)
-    for attr in _FLAT_LIST_FIELDS:
+    for attr in _DEPENDANT_LIST_FIELDS:
         value = getattr(clone, attr, None)
         if isinstance(value, list):
             setattr(clone, attr, value.copy())
@@ -197,14 +207,14 @@ def _cached_get_flat_dependant(
     cached = _active_cache.flat_dependants.get(cache_key)
     if cached is not None:
         _flat_hits += 1
-        return _copy_flat_dependant(cached)
+        return _copy_dependant(cached)
 
     _flat_misses += 1
     result = _original_get_flat_dependant(dependant, skip_repeats=False, **kwargs)
     _active_cache.flat_dependants[cache_key] = result
     # ``id(dependant)`` is part of ``cache_key``; pin it against GC address reuse.
     _active_cache.keep_alive(dependant)
-    return _copy_flat_dependant(result)
+    return _copy_dependant(result)
 
 
 # ---------------------------------------------------------------------------
