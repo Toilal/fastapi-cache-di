@@ -82,8 +82,10 @@ cache = DepsCache()
 with fastapi_deps_cache(deps_cache=cache):
     load_all_routes(app)
 
-# The cache survives the context, so you can inspect what was memoized.
+# The cache survives the context, so you can inspect what was memoized
+# and how effective it was (hit/miss counters live on the instance).
 print(len(cache.dependants), len(cache.flat_dependants))
+print(cache.flat_hits, cache.flat_misses)
 ```
 
 ## How it works
@@ -104,6 +106,13 @@ generation) bypass the cache since they depend on a mutable `visited` list.
 > **Note** — this patches FastAPI internals, so it is pinned to a compatible
 > FastAPI range. It is a **startup-only** optimization: patch before loading
 > routes, unpatch afterwards.
+
+> **Thread-safety** — all patch state is process-global and patching swaps
+> FastAPI module attributes for the whole process. It is not re-entrant across
+> threads: call `patch`/`unpatch` (or the context manager) from a single thread
+> during startup only. Calling `patch_fastapi_deps_cache(deps_cache=...)` while a
+> patch is already active keeps the existing cache and logs a warning — the new
+> cache is ignored until you `unpatch` first.
 
 ## Requirements
 

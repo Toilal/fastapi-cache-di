@@ -124,6 +124,9 @@ ignore_missing_imports = true
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
+markers = [
+    "timing_sensitive: wall-clock-dependent tests that may flake on noisy runners; quarantine with -m 'not timing_sensitive'",
+]
 
 [tool.coverage.report]
 exclude_lines = ["pragma: no cover"]

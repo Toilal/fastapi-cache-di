@@ -1,4 +1,5 @@
 import inspect
+import logging
 from collections.abc import Iterator
 from typing import Annotated
 
@@ -16,6 +17,7 @@ from fastapi_cache_di import (
     unpatch_fastapi_deps_cache,
 )
 from fastapi_cache_di import patch as patch_module
+from fastapi_cache_di.patch import _hashable
 
 
 @pytest.fixture(autouse=True)
@@ -319,18 +321,19 @@ class TestGetFlatDependantCache:
 
     def test_cache_prevents_redundant_traversal(self) -> None:
         """Shared sub-dependencies are flattened once, then served from cache."""
-        patch_fastapi_deps_cache()
+        cache = DepsCache()
+        patch_fastapi_deps_cache(cache)
         try:
             dep1 = _dep_utils.get_dependant(path="/a", call=_dummy_endpoint)
             dep2 = _dep_utils.get_dependant(path="/b", call=_dummy_endpoint)
             _dep_utils.get_flat_dependant(dep1)
 
-            hits_before = patch_module._flat_hits
+            hits_before = cache.flat_hits
 
             _dep_utils.get_flat_dependant(dep2)
 
             # The shared sub-dependency _dummy_dep should be a cache hit
-            assert patch_module._flat_hits > hits_before
+            assert cache.flat_hits > hits_before
         finally:
             unpatch_fastapi_deps_cache()
 
@@ -389,5 +392,114 @@ class TestKeepAliveGuardsAgainstIdReuse:
 
             _dep_utils.get_dependant(path="/x", call=ephemeral_endpoint)
             assert id(ephemeral_endpoint) in cache._keepalive
+        finally:
+            unpatch_fastapi_deps_cache()
+
+
+class TestDepsCacheIgnoredWhenAlreadyPatched:
+    def test_warns_when_deps_cache_passed_while_patched(
+        self, caplog: pytest.LogCaptureFixture
+    ) -> None:
+        patch_fastapi_deps_cache()
+        try:
+            other = DepsCache()
+            with caplog.at_level(logging.WARNING, logger=patch_module.__name__):
+                assert patch_fastapi_deps_cache(other) is False
+            assert any("was ignored" in r.message for r in caplog.records)
+            # The ignored cache is never adopted.
+            assert patch_module._active_cache is not other
+        finally:
+            unpatch_fastapi_deps_cache()
+
+    def test_no_warning_for_plain_reentrant_patch(
+        self, caplog: pytest.LogCaptureFixture
+    ) -> None:
+        patch_fastapi_deps_cache()
+        try:
+            with caplog.at_level(logging.WARNING, logger=patch_module.__name__):
+                assert patch_fastapi_deps_cache() is False
+            assert not caplog.records
+        finally:
+            unpatch_fastapi_deps_cache()
+
+    def test_no_warning_when_repassing_the_active_cache(
+        self, caplog: pytest.LogCaptureFixture
+    ) -> None:
+        cache = DepsCache()
+        patch_fastapi_deps_cache(cache)
+        try:
+            with caplog.at_level(logging.WARNING, logger=patch_module.__name__):
+                assert patch_fastapi_deps_cache(cache) is False
+            assert not caplog.records
+        finally:
+            unpatch_fastapi_deps_cache()
+
+
+class TestHashable:
+    def test_list_becomes_tuple(self) -> None:
+        assert _hashable(["a", "b"]) == ("a", "b")
+
+    def test_nested_list_is_recursed(self) -> None:
+        assert _hashable([["a"], ["b"]]) == (("a",), ("b",))
+
+    def test_set_becomes_sorted_tuple(self) -> None:
+        assert _hashable({"b", "a"}) == ("a", "b")
+
+    def test_dict_becomes_sorted_item_tuple(self) -> None:
+        assert _hashable({"b": 2, "a": 1}) == (("a", 1), ("b", 2))
+
+    def test_result_is_always_hashable(self) -> None:
+        # A dict nesting an unhashable value must still yield a hashable key.
+        hash(_hashable({"scopes": {"read", "write"}}))
+
+    def test_plain_hashable_passthrough(self) -> None:
+        assert _hashable("scope") == "scope"
+
+
+class TestStatsOnDepsCache:
+    def test_counters_track_hits_and_misses(self) -> None:
+        cache = DepsCache()
+        patch_fastapi_deps_cache(cache)
+        try:
+            _dep_utils.get_typed_signature(_dummy_dep)
+            _dep_utils.get_typed_signature(_dummy_dep)
+            assert cache.sig_misses == 1
+            assert cache.sig_hits == 1
+        finally:
+            unpatch_fastapi_deps_cache()
+
+    def test_caller_owned_counters_survive_unpatch(self) -> None:
+        cache = DepsCache()
+        patch_fastapi_deps_cache(cache)
+        _dep_utils.get_typed_signature(_dummy_dep)
+        _dep_utils.get_typed_signature(_dummy_dep)
+        unpatch_fastapi_deps_cache()
+        # Caller-owned cache keeps its stats for post-hoc inspection.
+        assert cache.sig_misses == 1
+        assert cache.sig_hits == 1
+
+    def test_clear_resets_counters(self) -> None:
+        cache = DepsCache()
+        patch_fastapi_deps_cache(cache)
+        _dep_utils.get_typed_signature(_dummy_dep)
+        unpatch_fastapi_deps_cache()
+        cache.clear()
+        assert cache.sig_misses == 0
+        assert cache.sig_hits == 0
+
+
+class TestUseCacheAffectsKey:
+    def test_use_cache_flag_separates_entries(self) -> None:
+        patch_fastapi_deps_cache()
+        try:
+            a = _dep_utils.get_dependant(
+                path="/test", call=_dummy_dep, name="dep", use_cache=True
+            )
+            b = _dep_utils.get_dependant(
+                path="/test", call=_dummy_dep, name="dep", use_cache=False
+            )
+            assert a is not b
+            assert a.use_cache is True
+            assert b.use_cache is False
         finally:
             unpatch_fastapi_deps_cache()

@@ -24,14 +24,17 @@ import pytest
 from fastapi import Depends, FastAPI
 
 from fastapi_cache_di import DepsCache, fastapi_deps_cache
-from fastapi_cache_di import patch as patch_module
 
 _DEPTH = 25
 _N_ROUTES = 300
 
 # The pipeline fails if caching does not speed route loading up by at least this
 # factor. The assertion compares cached vs uncached on the same machine, so the
-# ratio is independent of runner speed.
+# ratio is independent of runner speed — a slower runner only inflates it.
+# It remains inherently timing-dependent, though: under a noisy or heavily loaded
+# runner the two measurements can be perturbed unevenly. The gate carries the
+# ``timing_sensitive`` marker so it can be quarantined (``-m "not
+# timing_sensitive"``) if it starts flaking, without disabling the rest.
 _REQUIRED_SPEEDUP = 3.0
 
 
@@ -100,7 +103,7 @@ def _cached_flat_stats(build: Callable[[], Any]) -> tuple[int, int]:
     cache = DepsCache()
     with fastapi_deps_cache(deps_cache=cache):
         build()
-        return patch_module._flat_misses, patch_module._flat_hits
+        return cache.flat_misses, cache.flat_hits
 
 
 class TestWorkElimination:
@@ -220,6 +223,7 @@ def _uvicorn_startup_time(*, use_cache: bool) -> float:
 
 
 @pytest.mark.benchmark
+@pytest.mark.timing_sensitive
 class TestUvicornStartupGate:
     """Measure real uvicorn startup time and fail if the cache does not speed it
     up by at least the required factor. This is the pipeline gate."""

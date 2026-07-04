@@ -18,6 +18,9 @@ _BIN = Path(sys.executable).parent
 
 _PYTHON_BLOCK = re.compile(r"```python\n(.*?)```", re.DOTALL)
 
+if not (_BIN / "ruff").exists() or not (_BIN / "mypy").exists():  # pragma: no cover
+    pytest.skip("ruff/mypy not installed in this environment", allow_module_level=True)
+
 
 def _readme_python_blocks() -> list[str]:
     return _PYTHON_BLOCK.findall(_README.read_text(encoding="utf-8"))
@@ -63,7 +66,3 @@ def test_readme_examples_pass_mypy_strict(tmp_path: Path) -> None:
         env={**os.environ, "MYPYPATH": str(_REPO_ROOT / "src")},
     )
     assert result.returncode == 0, result.stdout + result.stderr
-
-
-if not (_BIN / "ruff").exists() or not (_BIN / "mypy").exists():  # pragma: no cover
-    pytest.skip("ruff/mypy not installed in this environment", allow_module_level=True)
