@@ -95,6 +95,33 @@ class TestPatchUnpatch:
 
         assert patch_module._active_cache is None
 
+    def test_unpatch_keeps_caller_owned_cache(self) -> None:
+        cache = DepsCache()
+        patch_fastapi_deps_cache(cache)
+        _dep_utils.get_typed_signature(_dummy_dep)
+        _dep_utils.get_dependant(path="/test", call=_dummy_dep)
+        assert len(cache.signatures) > 0
+        assert len(cache.dependants) > 0
+
+        unpatch_fastapi_deps_cache()
+
+        assert patch_module._active_cache is None
+        # The caller still owns their instance; it is not wiped on unpatch.
+        assert len(cache.signatures) > 0
+        assert len(cache.dependants) > 0
+
+    def test_unpatch_clears_internally_created_cache(self) -> None:
+        patch_fastapi_deps_cache()
+        cache = patch_module._active_cache
+        assert cache is not None
+        _dep_utils.get_typed_signature(_dummy_dep)
+        assert len(cache.signatures) > 0
+
+        unpatch_fastapi_deps_cache()
+
+        assert patch_module._active_cache is None
+        assert len(cache.signatures) == 0
+
 
 class TestContextManager:
     def test_patches_and_unpatches(self) -> None:

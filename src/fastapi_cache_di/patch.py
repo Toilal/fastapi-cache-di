@@ -48,6 +48,7 @@ _original_get_dependant: Callable[..., Dependant] | None = None
 _original_get_flat_dependant: Callable[..., Dependant] | None = None
 
 _active_cache: DepsCache | None = None
+_owns_cache = False
 _patched_routing_flat = False
 _sig_hits = 0
 _sig_misses = 0
@@ -237,11 +238,12 @@ def patch_fastapi_deps_cache(
     Returns ``True`` on the first call, ``False`` if already patched.
     """
     global _original_get_typed_signature, _original_get_dependant
-    global _original_get_flat_dependant, _active_cache
+    global _original_get_flat_dependant, _active_cache, _owns_cache
 
     if _original_get_typed_signature is not None:
         return False  # already patched
 
+    _owns_cache = deps_cache is None
     _active_cache = deps_cache if deps_cache is not None else DepsCache()
 
     # Cache get_typed_signature (module-level is enough — only called from utils)
@@ -275,7 +277,7 @@ def unpatch_fastapi_deps_cache() -> bool:
     Returns ``True`` if unpatched, ``False`` if not currently patched.
     """
     global _original_get_typed_signature, _original_get_dependant
-    global _original_get_flat_dependant, _active_cache
+    global _original_get_flat_dependant, _active_cache, _owns_cache
     global _sig_hits, _sig_misses, _dep_hits, _dep_misses
     global _flat_hits, _flat_misses
 
@@ -290,7 +292,7 @@ def unpatch_fastapi_deps_cache() -> bool:
         "FastAPI deps cache: "
         "get_typed_signature %d hits / %d misses (%d entries), "
         "get_dependant %d hits / %d misses (%d entries), "
-        "get_flat_dependant %d hits / %d misses (%d entries) — cleared.",
+        "get_flat_dependant %d hits / %d misses (%d entries) — %s.",
         _sig_hits,
         _sig_misses,
         len(_active_cache.signatures),
@@ -300,6 +302,7 @@ def unpatch_fastapi_deps_cache() -> bool:
         _flat_hits,
         _flat_misses,
         len(_active_cache.flat_dependants),
+        "cleared" if _owns_cache else "kept (caller-owned)",
     )
 
     global _patched_routing_flat
@@ -316,8 +319,12 @@ def unpatch_fastapi_deps_cache() -> bool:
     _original_get_dependant = None
     _original_get_flat_dependant = None
 
-    _active_cache.clear()
+    # An internally-created cache is dropped with the module reference (GC). A
+    # caller-owned cache is left populated for post-hoc inspection.
+    if _owns_cache:
+        _active_cache.clear()
     _active_cache = None
+    _owns_cache = False
     _sig_hits = 0
     _sig_misses = 0
     _dep_hits = 0
