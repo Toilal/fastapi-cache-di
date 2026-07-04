@@ -65,11 +65,18 @@ class TestCachePopulated:
         cache = DepsCache()
         with fastapi_deps_cache(deps_cache=cache):
             _build_app()
-            # The cache is populated during route loading; unpatch (on context
-            # exit) clears it, so entries must be observed inside the block.
             assert len(cache.signatures) > 0
             assert len(cache.dependants) > 0
             assert len(cache.flat_dependants) > 0
+
+    def test_caller_owned_cache_survives_context_exit(self) -> None:
+        cache = DepsCache()
+        with fastapi_deps_cache(deps_cache=cache):
+            _build_app()
+        # A caller-provided cache is left populated for post-hoc inspection.
+        assert len(cache.signatures) > 0
+        assert len(cache.dependants) > 0
+        assert len(cache.flat_dependants) > 0
 
     def test_cache_disabled_is_noop(self) -> None:
         with fastapi_deps_cache(deps_cache=False):
