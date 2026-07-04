@@ -122,6 +122,35 @@ class TestContextManager:
             b = _dep_utils.get_dependant(path="/test", call=_dummy_dep, name="dep")
             assert a is b
 
+    def test_nested_context_leaves_outer_patch_intact(self) -> None:
+        original_dep = _dep_utils.get_dependant
+
+        with fastapi_deps_cache():
+            outer_cache = patch_module._active_cache
+            with fastapi_deps_cache():
+                pass
+            # Inner exit must not tear down the outer patch/cache.
+            assert _dep_utils.get_dependant is not original_dep
+            assert patch_module._active_cache is outer_cache
+
+        assert _dep_utils.get_dependant is original_dep
+        assert patch_module._active_cache is None
+
+    def test_context_after_manual_patch_preserves_manual_patch(self) -> None:
+        original_dep = _dep_utils.get_dependant
+        patch_fastapi_deps_cache()
+        try:
+            manual_cache = patch_module._active_cache
+            with fastapi_deps_cache():
+                pass
+            # The context must leave the pre-existing manual patch untouched.
+            assert _dep_utils.get_dependant is not original_dep
+            assert patch_module._active_cache is manual_cache
+        finally:
+            unpatch_fastapi_deps_cache()
+
+        assert _dep_utils.get_dependant is original_dep
+
 
 class TestGetTypedSignatureCache:
     def test_returns_correct_signature(self) -> None:
