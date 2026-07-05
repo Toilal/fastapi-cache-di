@@ -1,5 +1,11 @@
 # fastapi-cache-di
 
+[![Latest Version](https://img.shields.io/pypi/v/fastapi-cache-di.svg)](https://pypi.python.org/pypi/fastapi-cache-di)
+[![MIT License](https://img.shields.io/badge/license-MIT-blue.svg)](https://github.com/Toilal/fastapi-cache-di/blob/develop/LICENSE)
+[![Build Status](https://img.shields.io/github/actions/workflow/status/Toilal/fastapi-cache-di/ci.yml?branch=develop)](https://github.com/Toilal/fastapi-cache-di/actions/workflows/ci.yml)
+[![Codecov](https://img.shields.io/codecov/c/github/Toilal/fastapi-cache-di)](https://codecov.io/gh/Toilal/fastapi-cache-di)
+[![semantic-release](https://img.shields.io/badge/%20%20%F0%9F%93%A6%F0%9F%9A%80-semantic--release-e10079.svg)](https://github.com/relekang/python-semantic-release)
+
 Speed up **FastAPI startup** by caching its dependency-tree introspection.
 
 At startup, FastAPI re-introspects every route's dependency tree with no caching,
