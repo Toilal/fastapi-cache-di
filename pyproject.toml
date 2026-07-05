@@ -50,8 +50,12 @@ test = [
     # so ruff + mypy must be present in the test environment too.
     { include-group = "lint" },
 ]
+docs = [
+    "zensical",
+]
 dev = [
     { include-group = "test" },
+    { include-group = "docs" },
     # Tooling driven by .pre-commit-config.yaml: the hooks run via `uv run`, so
     # these must be in the dev env / uv.lock.
     "pre-commit",
