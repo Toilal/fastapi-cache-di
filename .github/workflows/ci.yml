@@ -33,7 +33,7 @@ jobs:
       - name: Test
         # Exclude the timing-sensitive benchmarks; they run once in the
         # dedicated `benchmark` job (without coverage) instead.
-        run: uv run --no-sync pytest --cov=fastapi_cache_di -m "not benchmark"
+        run: uv run --no-sync pytest --cov=fastapi_cache_di --cov-report=xml -m "not benchmark"
 
       - name: Codecov
         uses: codecov/codecov-action@v7
