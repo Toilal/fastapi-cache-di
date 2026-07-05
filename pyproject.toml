@@ -6,7 +6,7 @@ dynamic = ["readme"]
 license = "MIT"
 license-files = ["LICENSE"]
 authors = [{ name = "Rémi Alvergnat", email = "toilal.dev@gmail.com" }]
-requires-python = ">=3.12"
+requires-python = ">=3.11"
 keywords = ["fastapi", "startup", "performance", "dependency-injection", "cache"]
 classifiers = [
     "Development Status :: 4 - Beta",
@@ -15,6 +15,7 @@ classifiers = [
     "License :: OSI Approved :: MIT License",
     "Operating System :: OS Independent",
     "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3.11",
     "Programming Language :: Python :: 3.12",
     "Programming Language :: Python :: 3.13",
     "Programming Language :: Python :: 3.14",
@@ -98,7 +99,7 @@ name = "cz_conventional_commits"
 
 [tool.ruff]
 line-length = 88
-target-version = "py312"
+target-version = "py311"
 
 [tool.ruff.lint]
 select = [
@@ -123,7 +124,7 @@ ignore = [
 ]
 
 [tool.mypy]
-python_version = "3.12"
+python_version = "3.11"
 files = ["src"]
 strict = true
 ignore_missing_imports = true
