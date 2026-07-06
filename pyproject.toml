@@ -1,6 +1,6 @@
 [project]
 name = "fastapi-cache-di"
-version = "0.2.0"
+version = "0.2.1"
 description = "Speed up FastAPI startup by caching dependency-tree introspection"
 dynamic = ["readme"]
 license = "MIT"

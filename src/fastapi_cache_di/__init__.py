@@ -7,7 +7,7 @@ from fastapi_cache_di.patch import (
     unpatch_fastapi_deps_cache,
 )
 
-__version__ = "0.2.0"
+__version__ = "0.2.1"
 
 __all__ = [
     "DepsCache",

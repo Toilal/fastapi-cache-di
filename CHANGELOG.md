@@ -2,6 +2,15 @@
 
 <!-- version list -->
 
+## v0.2.1 (2026-07-06)
+
+### Bug Fixes
+
+- Ship py.typed marker for PEP 561 type information
+  ([#11](https://github.com/Toilal/fastapi-cache-di/pull/11),
+  [`1a7eb6f`](https://github.com/Toilal/fastapi-cache-di/commit/1a7eb6f89c79b17910ad7e6642f2f229532cf98d))
+
+
 ## v0.2.0 (2026-07-05)
 
 ### Features
