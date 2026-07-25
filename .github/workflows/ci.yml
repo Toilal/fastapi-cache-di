@@ -63,7 +63,8 @@ jobs:
           - "0.123.0"   # security_scopes -> own/parent_oauth_scopes
           - "0.129.0"   # PEP 604 typing sweep
           - "0.137.0"   # routing dependant build extracted
-          - "0.139.0"   # latest
+          - "0.139.0"   # _IncludedRouter wrappers around included routes
+          - "0.140.0"   # latest
 
     steps:
       - uses: actions/checkout@v7
