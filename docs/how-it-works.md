@@ -1,29 +1,33 @@
 How it works
 ============
 
-`patch_fastapi_deps_cache()` replaces three functions in
+`patch_fastapi_deps_cache()` replaces up to three functions in
 `fastapi.dependencies.utils` (plus the `fastapi.routing` and
 `fastapi.openapi.utils` re-imports) with caching wrappers backed by a
 [`DepsCache`](./api.md#depscache). `unpatch_fastapi_deps_cache()` restores the
 originals.
 
-## The three cached functions
+## The cached functions
 
 FastAPI introspects every route's dependency tree at startup with no caching.
 Shared dependencies (an auth check, a DB handle, a role guard …) are
-re-introspected from scratch for every route that uses them. The three functions
-on that hot path, and how each is keyed:
+re-introspected from scratch for every route that uses them. The functions on
+that hot path, and how each is keyed:
 
 | Function | Cache key | Why |
 |---|---|---|
 | `get_typed_signature` | `id(call)` | avoid repeated signature parsing |
 | `get_dependant` | `(id(call), path params, name, use_cache, scope kwargs)` | avoid redundant tree introspection |
-| `get_flat_dependant` | `(id(dependant), parent_oauth_scopes)` | the dominant startup cost |
+| `get_flat_dependant` (FastAPI ≤ 0.140) | `(id(dependant), parent_oauth_scopes)` | the dominant startup cost on those versions |
 
-`get_flat_dependant` is the dominant cost: FastAPI calls it once per route in
-`APIRoute.__init__` to flatten the dependency tree, recursing through every
-sub-dependency without caching. Caching the recursive results turns
-`O(routes × tree-depth)` into `O(routes + unique-deps)`.
+On FastAPI ≤ 0.140, `get_flat_dependant` is the dominant cost: FastAPI calls it
+once per route in `APIRoute.__init__` to flatten the dependency tree, recursing
+through every sub-dependency without caching. Caching the recursive results
+turns `O(routes × tree-depth)` into `O(routes + unique-deps)`.
+
+FastAPI 0.141 removed `get_flat_dependant`: it now flattens the tree with
+iterative walks that build no `Dependant`, so only `get_typed_signature` and
+`get_dependant` are cached there.
 
 ## Where the patch is applied
 
@@ -34,15 +38,15 @@ Each function is patched in every module that holds its own reference:
 - **`get_dependant`** — patched in `fastapi.dependencies.utils` (for the
   recursive calls) and in `fastapi.routing` (which imports its own reference).
 - **`get_flat_dependant`** — patched in `fastapi.dependencies.utils`
-  (self-recursive calls), `fastapi.openapi.utils` (all versions), and
-  `fastapi.routing`. `routing` only imports `get_flat_dependant` from FastAPI
-  0.112.4 onwards, so it is patched there only if present (and remembered, to be
-  restored on unpatch).
+  (self-recursive calls), `fastapi.openapi.utils` and `fastapi.routing`, but
+  only in the modules that actually define it; the patched modules are
+  remembered and restored on unpatch. Nothing is patched from FastAPI 0.141,
+  where the function no longer exists: no attribute is ever injected into a
+  FastAPI module.
 
-The `openapi.utils` patch is effectively a no-op on current FastAPI: both call
-sites there pass `skip_repeats=True`, which the wrapper short-circuits straight
-to the original without caching. It is installed for symmetry and as a safety
-net.
+The `openapi.utils` patch is effectively a no-op: both call sites there pass
+`skip_repeats=True`, which the wrapper short-circuits straight to the original
+without caching. It is installed for symmetry and as a safety net.
 
 ## Copy-on-return semantics
 

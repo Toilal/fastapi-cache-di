@@ -10,15 +10,17 @@ fastapi-cache-di
 Speed up **FastAPI startup** by caching its dependency-tree introspection.
 
 At startup, FastAPI introspects every route's dependency tree — calling
-`get_typed_signature`, `get_dependant` and `get_flat_dependant` — with **no
-caching**. Dependencies shared across many routes (auth checks, DB handles,
-role guards …) are re-introspected from scratch for every route. On a large API
-this dominates import/boot time.
+`get_typed_signature`, `get_dependant` and, up to FastAPI 0.140,
+`get_flat_dependant` — with **no caching**. Dependencies shared across many
+routes (auth checks, DB handles, role guards …) are re-introspected from scratch
+for every route. On a large API this dominates import/boot time.
 
-`fastapi-cache-di` monkeypatches those three functions to memoize their results
-for the duration of route loading, then restores the originals. The heavy one is
-`get_flat_dependant`, called once per route in `APIRoute.__init__`: caching its
-recursive results turns `O(routes × tree-depth)` into `O(routes + unique-deps)`.
+`fastapi-cache-di` monkeypatches those functions to memoize their results for
+the duration of route loading, then restores the originals. On FastAPI ≤ 0.140
+the heavy one is `get_flat_dependant`, called once per route in
+`APIRoute.__init__`: caching its recursive results turns
+`O(routes × tree-depth)` into `O(routes + unique-deps)`. FastAPI 0.141 removed
+it, so only the other two are cached there.
 
 Install
 -------
@@ -74,7 +76,7 @@ Requirements
 !!! note
     `0.112.4` is the floor: that is when FastAPI started calling
     `get_flat_dependant` during route construction, which is the hot path this
-    library caches. Validated in CI up to FastAPI 0.139.
+    library caches. Validated in CI up to FastAPI 0.143.1.
 
 Support
 -------

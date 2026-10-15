@@ -112,7 +112,7 @@ each:
 |---|---|---|
 | `signatures` | `sig_hits`, `sig_misses` | `get_typed_signature` |
 | `dependants` | `dep_hits`, `dep_misses` | `get_dependant` |
-| `flat_dependants` | `flat_hits`, `flat_misses` | `get_flat_dependant` |
+| `flat_dependants` | `flat_hits`, `flat_misses` | `get_flat_dependant` (FastAPI ≤ 0.140; empty from 0.141) |
 
 Call `cache.clear()` to drop all entries and reset every counter, so the same
 instance can be reused for another loading pass.
