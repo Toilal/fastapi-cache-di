@@ -26,7 +26,7 @@ dependencies = [
     # 0.112.4 is the floor: that is when FastAPI started calling
     # get_flat_dependant during route construction (importing it into
     # fastapi.routing), which is the hot path this library caches. Validated in
-    # CI up to 0.139.
+    # CI up to 0.143.1 (get_flat_dependant is gone from 0.141).
     "fastapi>=0.112.4,<1.0",
 ]
 
