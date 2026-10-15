@@ -21,6 +21,7 @@ from typing import Any
 import fastapi.dependencies.utils as _dep_utils
 import fastapi.routing as _routing
 import pytest
+from _compat import requires_flat_dependant
 from fastapi import Depends, FastAPI
 
 from fastapi_cache_di import DepsCache, fastapi_deps_cache
@@ -106,6 +107,7 @@ def _cached_flat_stats(build: Callable[[], Any]) -> tuple[int, int]:
         return cache.flat_misses, cache.flat_hits
 
 
+@requires_flat_dependant
 class TestWorkElimination:
     def test_cache_runs_the_expensive_body_far_less(self) -> None:
         head = _build_shared_chain(depth=15)

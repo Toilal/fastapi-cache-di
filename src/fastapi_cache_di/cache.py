@@ -8,7 +8,9 @@ functions:
 - **dependants** — ``get_dependant`` results, keyed by a composite tuple that
   captures every argument that affects the produced ``Dependant``.
 - **flat_dependants** — ``get_flat_dependant`` results, keyed by
-  ``(id(dependant), parent_oauth_scopes)``.
+  ``(id(dependant), parent_oauth_scopes)``. Only populated on FastAPI <= 0.140:
+  the function no longer exists from 0.141, so this store and its ``flat_*``
+  counters stay empty there.
 """
 
 from __future__ import annotations

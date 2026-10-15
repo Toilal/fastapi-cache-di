@@ -2,6 +2,7 @@
 
 from typing import Annotated
 
+from _compat import HAS_FLAT_DEPENDANT
 from fastapi import Depends, FastAPI, Security
 from fastapi.routing import APIRoute
 from fastapi.testclient import TestClient
@@ -67,7 +68,7 @@ class TestCachePopulated:
             _build_app()
             assert len(cache.signatures) > 0
             assert len(cache.dependants) > 0
-            assert len(cache.flat_dependants) > 0
+            assert bool(cache.flat_dependants) is HAS_FLAT_DEPENDANT
 
     def test_caller_owned_cache_survives_context_exit(self) -> None:
         cache = DepsCache()
@@ -76,7 +77,7 @@ class TestCachePopulated:
         # A caller-provided cache is left populated for post-hoc inspection.
         assert len(cache.signatures) > 0
         assert len(cache.dependants) > 0
-        assert len(cache.flat_dependants) > 0
+        assert bool(cache.flat_dependants) is HAS_FLAT_DEPENDANT
 
     def test_cache_disabled_is_noop(self) -> None:
         with fastapi_deps_cache(deps_cache=False):

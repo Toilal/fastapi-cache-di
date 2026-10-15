@@ -5,25 +5,28 @@ FastAPI calls ``get_typed_signature`` and ``get_dependant`` for every
 Shared dependencies such as an auth check or a DB handle are re-introspected
 tens of thousands of times.
 
-This module caches three functions:
+This module caches up to three functions:
 
 - ``get_typed_signature``: saves repeated signature parsing.
 - ``get_dependant``: eliminates redundant recursive introspection of the
   dependency tree.
-- ``get_flat_dependant``: the **dominant startup cost**. FastAPI calls it once
-  per route in ``APIRoute.__init__`` to flatten the dependency tree, and it
-  recurses through every sub-dependency without caching. Shared sub-dependencies
-  (auth, DB, roles ...) are re-traversed from scratch for every route. Caching
-  the recursive results by ``(id(dependant), parent_oauth_scopes)`` turns
-  O(routes * tree-depth) into O(routes + unique-deps).
+- ``get_flat_dependant`` (FastAPI <= 0.140 only, removed in 0.141): the
+  **dominant startup cost** on those versions. FastAPI calls it once per route
+  in ``APIRoute.__init__`` to flatten the dependency tree, and it recurses
+  through every sub-dependency without caching. Shared sub-dependencies (auth,
+  DB, roles ...) are re-traversed from scratch for every route. Caching the
+  recursive results by ``(id(dependant), parent_oauth_scopes)`` turns
+  O(routes * tree-depth) into O(routes + unique-deps). From 0.141, FastAPI
+  flattens the tree with iterative walks that build no ``Dependant``, so only
+  the first two functions are cached.
 
 Call :func:`patch_fastapi_deps_cache` **once** before the app loads its routes.
 Call :func:`unpatch_fastapi_deps_cache` after route loading to restore originals
 and free memory — or use the :func:`fastapi_deps_cache` context manager.
 
 .. warning::
-   All patch state lives in module globals (originals, active cache, whether the
-   routing flat patch was applied). Patching swaps FastAPI module attributes
+   All patch state lives in module globals (originals, active cache, the modules
+   whose ``get_flat_dependant`` was patched). Patching swaps FastAPI module attributes
    process-wide; it is neither thread-safe nor safe to interleave with route
    loading on other threads. Use ``patch``/``unpatch`` (and the context manager)
    from a single thread during startup only. Hit/miss counters live on the
@@ -37,6 +40,7 @@ import inspect
 import logging
 from collections.abc import Callable, Iterator
 from contextlib import contextmanager
+from types import ModuleType
 from typing import Any
 
 import fastapi.dependencies.utils as _dep_utils
@@ -59,7 +63,12 @@ _original_get_flat_dependant: Callable[..., Dependant] | None = None
 
 _active_cache: DepsCache | None = None
 _owns_cache = False
-_patched_routing_flat = False
+_patched_flat_modules: tuple[ModuleType, ...] = ()
+
+# Every module that may hold its own ``get_flat_dependant`` reference: utils
+# (self-recursive calls), openapi, and routing (from FastAPI 0.112.4). None of
+# them has it from FastAPI 0.141 onwards.
+_FLAT_DEPENDANT_MODULES = (_dep_utils, _openapi_utils, _routing)
 
 
 # ---------------------------------------------------------------------------
@@ -272,7 +281,7 @@ def patch_fastapi_deps_cache(
     deps_cache: DepsCache | None = None,
 ) -> bool:
     """Install caching wrappers for ``get_typed_signature``, ``get_dependant``
-    and ``get_flat_dependant``.
+    and, on FastAPI <= 0.140, ``get_flat_dependant``.
 
     Parameters
     ----------
@@ -307,24 +316,27 @@ def patch_fastapi_deps_cache(
     _dep_utils.get_dependant = _cached_get_dependant
     _routing.get_dependant = _cached_get_dependant  # type: ignore[attr-defined]
 
-    # Cache get_flat_dependant — patch the modules that import it: utils
-    # (self-recursive calls), openapi (all versions), and routing. ``routing``
-    # only imports ``get_flat_dependant`` from FastAPI 0.112.4 onwards, so patch
-    # it there only if present, and remember whether we did (for unpatch).
+    # Cache get_flat_dependant — patch every module that holds a reference to
+    # it, and remember which ones (for unpatch). Nothing is patched from FastAPI
+    # 0.141 onwards, where the function no longer exists: setting the attribute
+    # anyway would inject a name FastAPI does not define.
     #
-    # The openapi patch is effectively a no-op on current FastAPI: both call
-    # sites (``fastapi/openapi/utils.py``) pass ``skip_repeats=True``, which the
+    # The openapi patch is effectively a no-op: both call sites
+    # (``fastapi/openapi/utils.py``) pass ``skip_repeats=True``, which the
     # wrapper short-circuits straight to the original without caching. It is
     # installed for symmetry and as a safety net, so that any FastAPI version (or
     # third-party caller) reaching ``openapi.utils.get_flat_dependant`` with
     # ``skip_repeats=False`` still routes through the cache rather than diverging.
-    global _patched_routing_flat
-    _original_get_flat_dependant = _dep_utils.get_flat_dependant
-    _dep_utils.get_flat_dependant = _cached_get_flat_dependant
-    _openapi_utils.get_flat_dependant = _cached_get_flat_dependant  # type: ignore[attr-defined]
-    if hasattr(_routing, "get_flat_dependant"):
-        _routing.get_flat_dependant = _cached_get_flat_dependant
-        _patched_routing_flat = True
+    global _patched_flat_modules
+    if hasattr(_dep_utils, "get_flat_dependant"):
+        _original_get_flat_dependant = _dep_utils.get_flat_dependant
+        _patched_flat_modules = tuple(
+            module
+            for module in _FLAT_DEPENDANT_MODULES
+            if hasattr(module, "get_flat_dependant")
+        )
+        for module in _patched_flat_modules:
+            module.get_flat_dependant = _cached_get_flat_dependant  # type: ignore[attr-defined]
 
     return True
 
@@ -336,40 +348,52 @@ def unpatch_fastapi_deps_cache() -> bool:
     """
     global _original_get_typed_signature, _original_get_dependant
     global _original_get_flat_dependant, _active_cache, _owns_cache
+    global _patched_flat_modules
 
     if _original_get_typed_signature is None:
         return False
 
     assert _original_get_dependant is not None
-    assert _original_get_flat_dependant is not None
     assert _active_cache is not None
 
+    stats = [
+        (
+            "get_typed_signature",
+            _active_cache.sig_hits,
+            _active_cache.sig_misses,
+            len(_active_cache.signatures),
+        ),
+        (
+            "get_dependant",
+            _active_cache.dep_hits,
+            _active_cache.dep_misses,
+            len(_active_cache.dependants),
+        ),
+    ]
+    if _patched_flat_modules:
+        stats.append(
+            (
+                "get_flat_dependant",
+                _active_cache.flat_hits,
+                _active_cache.flat_misses,
+                len(_active_cache.flat_dependants),
+            )
+        )
     logger.info(
-        "FastAPI deps cache: "
-        "get_typed_signature %d hits / %d misses (%d entries), "
-        "get_dependant %d hits / %d misses (%d entries), "
-        "get_flat_dependant %d hits / %d misses (%d entries) — %s.",
-        _active_cache.sig_hits,
-        _active_cache.sig_misses,
-        len(_active_cache.signatures),
-        _active_cache.dep_hits,
-        _active_cache.dep_misses,
-        len(_active_cache.dependants),
-        _active_cache.flat_hits,
-        _active_cache.flat_misses,
-        len(_active_cache.flat_dependants),
+        "FastAPI deps cache: %s — %s.",
+        ", ".join(
+            f"{name} {hits} hits / {misses} misses ({entries} entries)"
+            for name, hits, misses, entries in stats
+        ),
         "cleared" if _owns_cache else "kept (caller-owned)",
     )
 
-    global _patched_routing_flat
     _dep_utils.get_typed_signature = _original_get_typed_signature
     _dep_utils.get_dependant = _original_get_dependant
     _routing.get_dependant = _original_get_dependant  # type: ignore[attr-defined]
-    _dep_utils.get_flat_dependant = _original_get_flat_dependant
-    _openapi_utils.get_flat_dependant = _original_get_flat_dependant  # type: ignore[attr-defined]
-    if _patched_routing_flat:
-        _routing.get_flat_dependant = _original_get_flat_dependant  # type: ignore[attr-defined]
-        _patched_routing_flat = False
+    for module in _patched_flat_modules:
+        module.get_flat_dependant = _original_get_flat_dependant  # type: ignore[attr-defined]
+    _patched_flat_modules = ()
 
     _original_get_typed_signature = None
     _original_get_dependant = None

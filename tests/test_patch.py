@@ -7,6 +7,11 @@ import fastapi.dependencies.utils as _dep_utils
 import fastapi.openapi.utils as _openapi_utils
 import fastapi.routing as _routing
 import pytest
+from _compat import (
+    HAS_FLAT_DEPENDANT,
+    requires_flat_dependant,
+    requires_no_flat_dependant,
+)
 from fastapi import Depends
 from fastapi.dependencies.models import Dependant
 
@@ -61,27 +66,60 @@ class TestPatchUnpatch:
         original_sig = _dep_utils.get_typed_signature
         original_dep = _dep_utils.get_dependant
         original_routing_dep = _routing.get_dependant
-        original_flat = _dep_utils.get_flat_dependant
-        original_routing_flat = _routing.get_flat_dependant
-        original_openapi_flat = _openapi_utils.get_flat_dependant
 
         patch_fastapi_deps_cache()
 
         assert _dep_utils.get_typed_signature is not original_sig
         assert _dep_utils.get_dependant is not original_dep
         assert _routing.get_dependant is not original_routing_dep
-        assert _dep_utils.get_flat_dependant is not original_flat
-        assert _routing.get_flat_dependant is not original_routing_flat
-        assert _openapi_utils.get_flat_dependant is not original_openapi_flat
 
         unpatch_fastapi_deps_cache()
 
         assert _dep_utils.get_typed_signature is original_sig
         assert _dep_utils.get_dependant is original_dep
         assert _routing.get_dependant is original_routing_dep
+
+    @requires_flat_dependant
+    def test_unpatch_restores_flat_dependant_originals(self) -> None:
+        original_flat = _dep_utils.get_flat_dependant
+        original_routing_flat = _routing.get_flat_dependant
+        original_openapi_flat = _openapi_utils.get_flat_dependant
+
+        patch_fastapi_deps_cache()
+
+        assert _dep_utils.get_flat_dependant is not original_flat
+        assert _routing.get_flat_dependant is not original_routing_flat
+        assert _openapi_utils.get_flat_dependant is not original_openapi_flat
+
+        unpatch_fastapi_deps_cache()
+
         assert _dep_utils.get_flat_dependant is original_flat
         assert _routing.get_flat_dependant is original_routing_flat
         assert _openapi_utils.get_flat_dependant is original_openapi_flat
+
+    @requires_no_flat_dependant
+    def test_patch_does_not_inject_flat_dependant(self) -> None:
+        modules = (_dep_utils, _openapi_utils, _routing)
+
+        patch_fastapi_deps_cache()
+        try:
+            assert not any(hasattr(m, "get_flat_dependant") for m in modules)
+        finally:
+            unpatch_fastapi_deps_cache()
+
+        assert not any(hasattr(m, "get_flat_dependant") for m in modules)
+
+    def test_unpatch_summary_reports_only_patched_functions(
+        self, caplog: pytest.LogCaptureFixture
+    ) -> None:
+        patch_fastapi_deps_cache()
+        with caplog.at_level(logging.INFO, logger=patch_module.__name__):
+            unpatch_fastapi_deps_cache()
+
+        (summary,) = caplog.messages
+        assert "get_typed_signature" in summary
+        assert "get_dependant" in summary
+        assert ("get_flat_dependant" in summary) is HAS_FLAT_DEPENDANT
 
     def test_unpatch_clears_caches(self) -> None:
         patch_fastapi_deps_cache()
@@ -294,6 +332,7 @@ class TestGetDependantCache:
             unpatch_fastapi_deps_cache()
 
 
+@requires_flat_dependant
 class TestGetFlatDependantCache:
     def test_returns_dependant(self) -> None:
         patch_fastapi_deps_cache()
