@@ -2,6 +2,33 @@
 
 <!-- version list -->
 
+## v0.3.0 (2026-10-16)
+
+### Bug Fixes
+
+- Patch get_flat_dependant only where FastAPI still defines it
+  ([#14](https://github.com/Toilal/fastapi-cache-di/pull/14),
+  [`30fbb28`](https://github.com/Toilal/fastapi-cache-di/commit/30fbb2898aa08e1163b493fb3a7833f9cd4b6e12))
+
+- Support FastAPI 0.141+ where get_flat_dependant no longer exists
+  ([#14](https://github.com/Toilal/fastapi-cache-di/pull/14),
+  [`30fbb28`](https://github.com/Toilal/fastapi-cache-di/commit/30fbb2898aa08e1163b493fb3a7833f9cd4b6e12))
+
+### Features
+
+- Call loop-safe dependencies on the event loop instead of a threadpool hop
+  ([#16](https://github.com/Toilal/fastapi-cache-di/pull/16),
+  [`a37d214`](https://github.com/Toilal/fastapi-cache-di/commit/a37d214e0c31012062d0edca3184aa49cbffb28a))
+
+- Skip cached sub-trees when dependency_overrides is set too
+  ([#15](https://github.com/Toilal/fastapi-cache-di/pull/15),
+  [`bb8a2f7`](https://github.com/Toilal/fastapi-cache-di/commit/bb8a2f7d61764740a79b7ce0fe9b0d4bec016cb3))
+
+- Skip re-walking the sub-tree of already-cached dependencies at request time
+  ([#15](https://github.com/Toilal/fastapi-cache-di/pull/15),
+  [`bb8a2f7`](https://github.com/Toilal/fastapi-cache-di/commit/bb8a2f7d61764740a79b7ce0fe9b0d4bec016cb3))
+
+
 ## v0.2.1 (2026-07-06)
 
 ### Bug Fixes
