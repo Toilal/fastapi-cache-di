@@ -579,14 +579,16 @@
 <a href="https://github.com/relekang/python-semantic-release"><img alt="semantic-release" src="https://img.shields.io/badge/%20%20%F0%9F%93%A6%F0%9F%9A%80-semantic--release-e10079.svg" /></a></p>
 <p>Speed up <strong>FastAPI startup</strong> by caching its dependency-tree introspection.</p>
 <p>At startup, FastAPI introspects every route's dependency tree — calling
-<code>get_typed_signature</code>, <code>get_dependant</code> and <code>get_flat_dependant</code> — with <strong>no
-caching</strong>. Dependencies shared across many routes (auth checks, DB handles,
-role guards …) are re-introspected from scratch for every route. On a large API
-this dominates import/boot time.</p>
-<p><code>fastapi-cache-di</code> monkeypatches those three functions to memoize their results
-for the duration of route loading, then restores the originals. The heavy one is
-<code>get_flat_dependant</code>, called once per route in <code>APIRoute.__init__</code>: caching its
-recursive results turns <code>O(routes × tree-depth)</code> into <code>O(routes + unique-deps)</code>.</p>
+<code>get_typed_signature</code>, <code>get_dependant</code> and, up to FastAPI 0.140,
+<code>get_flat_dependant</code> — with <strong>no caching</strong>. Dependencies shared across many
+routes (auth checks, DB handles, role guards …) are re-introspected from scratch
+for every route. On a large API this dominates import/boot time.</p>
+<p><code>fastapi-cache-di</code> monkeypatches those functions to memoize their results for
+the duration of route loading, then restores the originals. On FastAPI ≤ 0.140
+the heavy one is <code>get_flat_dependant</code>, called once per route in
+<code>APIRoute.__init__</code>: caching its recursive results turns
+<code>O(routes × tree-depth)</code> into <code>O(routes + unique-deps)</code>. FastAPI 0.141 removed
+it, so only the other two are cached there.</p>
 <h2 id="install">Install<a class="headerlink" href="#install" title="Permanent link">&para;</a></h2>
 <p>Install fastapi-cache-di with <a href="https://pip.pypa.io/">pip</a>:</p>
 <div class="language-bash highlight"><pre><span></span><code><span id="__span-0-1"><a id="__codelineno-0-1" name="__codelineno-0-1" href="#__codelineno-0-1"></a>pip<span class="w"> </span>install<span class="w"> </span>fastapi-cache-di
@@ -615,7 +617,9 @@ recursive results turns <code>O(routes × tree-depth)</code> into <code>O(routes
 <p>That is all it takes: introspection results are memoized while routes are being
 registered, and FastAPI's original functions are restored when the block exits.</p>
 <p>See the <a href="./usage/">usage guide</a> for manual patching, sharing and inspecting a
-cache, and thread-safety notes. See <a href="./how-it-works/">how it works</a> for the
+cache, thread-safety notes, and the opt-in runtime patches that call loop-safe
+dependencies on the event loop and skip re-walking the sub-tree of dependencies
+already cached for a request. See <a href="./how-it-works/">how it works</a> for the
 caching internals, and the <a href="./api/">API reference</a> for the full public API.</p>
 <h2 id="requirements">Requirements<a class="headerlink" href="#requirements" title="Permanent link">&para;</a></h2>
 <ul>
@@ -626,7 +630,7 @@ caching internals, and the <a href="./api/">API reference</a> for the full publi
 <p class="admonition-title">Note</p>
 <p><code>0.112.4</code> is the floor: that is when FastAPI started calling
 <code>get_flat_dependant</code> during route construction, which is the hot path this
-library caches. Validated in CI up to FastAPI 0.139.</p>
+library caches. Validated in CI up to FastAPI 0.143.1.</p>
 </div>
 <h2 id="support">Support<a class="headerlink" href="#support" title="Permanent link">&para;</a></h2>
 <p>This project is hosted on <a href="https://github.com/Toilal/fastapi-cache-di">GitHub</a>.
