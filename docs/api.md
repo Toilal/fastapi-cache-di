@@ -39,8 +39,9 @@ nested block does not unpatch and destroy the still-wanted outer cache.
 patch_fastapi_deps_cache(deps_cache: DepsCache | None = None) -> bool
 ```
 
-Install caching wrappers for `get_typed_signature`, `get_dependant` and
-`get_flat_dependant`. Call it **once**, before the app loads its routes.
+Install caching wrappers for `get_typed_signature`, `get_dependant` and, on
+FastAPI ≤ 0.140, `get_flat_dependant`. Call it **once**, before the app loads
+its routes.
 
 **Parameters**
 
@@ -58,7 +59,7 @@ unpatch_fastapi_deps_cache() -> bool
 ```
 
 Restore the original FastAPI functions and free cache memory. Logs a hit/miss
-summary at `INFO` level. An internally-created cache is cleared; a caller-owned
+summary of the patched functions at `INFO` level. An internally-created cache is cleared; a caller-owned
 cache is left populated (entries and counters) for post-hoc inspection.
 
 **Returns** `True` if unpatched, `False` if not currently patched.
@@ -79,10 +80,10 @@ caller-owned cache still exposes its effectiveness after `unpatch`.
 |---|---|---|
 | `signatures` | `dict[int, inspect.Signature]` | `get_typed_signature` results, keyed by `id(call)` |
 | `dependants` | `dict[tuple, Dependant]` | `get_dependant` results, keyed by a composite tuple of every argument that affects the produced `Dependant` |
-| `flat_dependants` | `dict[tuple, Dependant]` | `get_flat_dependant` results, keyed by `(id(dependant), parent_oauth_scopes)` |
+| `flat_dependants` | `dict[tuple, Dependant]` | `get_flat_dependant` results, keyed by `(id(dependant), parent_oauth_scopes)`; always empty on FastAPI ≥ 0.141 |
 | `sig_hits`, `sig_misses` | `int` | `get_typed_signature` cache hits / misses |
 | `dep_hits`, `dep_misses` | `int` | `get_dependant` cache hits / misses |
-| `flat_hits`, `flat_misses` | `int` | `get_flat_dependant` cache hits / misses |
+| `flat_hits`, `flat_misses` | `int` | `get_flat_dependant` cache hits / misses; always 0 on FastAPI ≥ 0.141 |
 
 **Methods**
 

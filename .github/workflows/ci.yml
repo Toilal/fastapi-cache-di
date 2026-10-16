@@ -64,7 +64,9 @@ jobs:
           - "0.129.0"   # PEP 604 typing sweep
           - "0.137.0"   # routing dependant build extracted
           - "0.139.0"   # _IncludedRouter wrappers around included routes
-          - "0.140.0"   # latest
+          - "0.140.0"   # last with get_flat_dependant
+          - "0.141.0"   # get_flat_dependant removed
+          - "0.143.1"   # latest
 
     steps:
       - uses: actions/checkout@v7
