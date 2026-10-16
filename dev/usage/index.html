@@ -368,6 +368,17 @@
   
 </li>
       
+        <li class="md-nav__item">
+  <a href="#skipping-the-sub-tree-of-cached-dependencies" class="md-nav__link">
+    <span class="md-ellipsis">
+      <span class="md-typeset">
+        Skipping the sub-tree of cached dependencies
+      </span>
+    </span>
+  </a>
+  
+</li>
+      
     </ul>
   
 </nav>
@@ -512,6 +523,17 @@
   
 </li>
       
+        <li class="md-nav__item">
+  <a href="#skipping-the-sub-tree-of-cached-dependencies" class="md-nav__link">
+    <span class="md-ellipsis">
+      <span class="md-typeset">
+        Skipping the sub-tree of cached dependencies
+      </span>
+    </span>
+  </a>
+  
+</li>
+      
     </ul>
   
 </nav>
@@ -552,11 +574,13 @@
 
 
 <h1 id="usage">Usage<a class="headerlink" href="#usage" title="Permanent link">&para;</a></h1>
-<p><code>fastapi-cache-di</code> is a <strong>startup-only</strong> optimization. The cache must be active
+<p>The dependency cache is a <strong>startup-only</strong> optimization. The cache must be active
 while FastAPI introspects your routes' dependency trees — that is, while routers
 are being included / routes registered — and torn down afterwards.</p>
 <p>There are three ways to drive it: the context manager, manual patch/unpatch, and
 a caller-owned shared cache you can inspect afterwards.</p>
+<p>Separately, an opt-in runtime patch cuts a per-request cost, see
+<a href="#skipping-the-sub-tree-of-cached-dependencies">Skipping the sub-tree of cached dependencies</a>.</p>
 <h2 id="context-manager-recommended">Context manager (recommended)<a class="headerlink" href="#context-manager-recommended" title="Permanent link">&para;</a></h2>
 <p><code>fastapi_deps_cache</code> enables caching for the duration of the block, then restores
 FastAPI's originals and frees the cache memory on exit:</p>
@@ -683,6 +707,31 @@ globals, a caller-owned cache still exposes its statistics after <code>unpatch</
 <p>Calling <code>patch_fastapi_deps_cache(deps_cache=...)</code> while a patch is already
 active keeps the <strong>existing</strong> cache and logs a warning — the new cache is ignored
 until you <code>unpatch</code> first.</p>
+<h2 id="skipping-the-sub-tree-of-cached-dependencies">Skipping the sub-tree of cached dependencies<a class="headerlink" href="#skipping-the-sub-tree-of-cached-dependencies" title="Permanent link">&para;</a></h2>
+<p>At <strong>request time</strong>, FastAPI solves the whole sub-tree of a dependency before
+checking whether its value is already in the request's cache. The cache saves the
+call, not the walk: a dependency shared across a deep tree (a DB handle, a
+session service, repositories …) has its sub-tree solved again at every
+occurrence, query, header and cookie parameters included, and the result is
+thrown away. The cost grows with the number of occurrences in the tree, not with
+the number of unique dependencies.</p>
+<p><code>patch_fastapi_solve_dependencies()</code> stops that walk as soon as the value is
+cached; FastAPI then reuses the cached value as before. Unlike the dependency
+cache, it is meant to stay active for the app's lifetime:</p>
+<div class="language-python highlight"><pre><span></span><code><span id="__span-4-1"><a id="__codelineno-4-1" name="__codelineno-4-1" href="#__codelineno-4-1"></a><span class="kn">from</span><span class="w"> </span><span class="nn">fastapi</span><span class="w"> </span><span class="kn">import</span> <span class="n">FastAPI</span>
+</span><span id="__span-4-2"><a id="__codelineno-4-2" name="__codelineno-4-2" href="#__codelineno-4-2"></a>
+</span><span id="__span-4-3"><a id="__codelineno-4-3" name="__codelineno-4-3" href="#__codelineno-4-3"></a><span class="kn">from</span><span class="w"> </span><span class="nn">fastapi_cache_di</span><span class="w"> </span><span class="kn">import</span> <span class="n">patch_fastapi_solve_dependencies</span>
+</span><span id="__span-4-4"><a id="__codelineno-4-4" name="__codelineno-4-4" href="#__codelineno-4-4"></a>
+</span><span id="__span-4-5"><a id="__codelineno-4-5" name="__codelineno-4-5" href="#__codelineno-4-5"></a><span class="n">patch_fastapi_solve_dependencies</span><span class="p">()</span>
+</span><span id="__span-4-6"><a id="__codelineno-4-6" name="__codelineno-4-6" href="#__codelineno-4-6"></a>
+</span><span id="__span-4-7"><a id="__codelineno-4-7" name="__codelineno-4-7" href="#__codelineno-4-7"></a><span class="n">app</span> <span class="o">=</span> <span class="n">FastAPI</span><span class="p">()</span>
+</span></code></pre></div>
+<p><code>unpatch_fastapi_solve_dependencies()</code> restores FastAPI's behavior. The two
+patches are independent: either can be used without the other.</p>
+<p>The values injected into endpoints are unchanged. The only visible difference: a
+<code>use_cache=False</code> dependency nested under a cached dependency is no longer called
+again during the skipped walk, whose result was discarded anyway. It works the
+same with <code>dependency_overrides</code> set, as in most test suites.</p>
 
 
 

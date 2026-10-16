@@ -405,6 +405,17 @@
   
 </li>
       
+        <li class="md-nav__item">
+  <a href="#skipping-cached-sub-trees-at-request-time" class="md-nav__link">
+    <span class="md-ellipsis">
+      <span class="md-typeset">
+        Skipping cached sub-trees at request time
+      </span>
+    </span>
+  </a>
+  
+</li>
+      
     </ul>
   
 </nav>
@@ -528,6 +539,17 @@
     <span class="md-ellipsis">
       <span class="md-typeset">
         <code>id()</code> recycling protection
+      </span>
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#skipping-cached-sub-trees-at-request-time" class="md-nav__link">
+    <span class="md-ellipsis">
+      <span class="md-typeset">
+        Skipping cached sub-trees at request time
       </span>
     </span>
   </a>
@@ -677,6 +699,37 @@ collected, so a short-lived callable could be collected and a later object
 allocated at the same address, then wrongly served the dead object's cached
 entry. <code>DepsCache</code> holds a strong reference to every keyed object (via
 <code>keep_alive</code>) so its address stays reserved for the cache's lifetime.</p>
+<h2 id="skipping-cached-sub-trees-at-request-time">Skipping cached sub-trees at request time<a class="headerlink" href="#skipping-cached-sub-trees-at-request-time" title="Permanent link">&para;</a></h2>
+<p><code>solve_dependencies</code> loops over a dependant's sub-dependencies, recurses into each
+one, and only then checks whether the sub-dependency's value is already in the
+request's <code>dependency_cache</code>. <code>patch_fastapi_solve_dependencies()</code> wraps it: when
+the caller's sub-dependency is cached, the recursive call returns an empty
+<code>SolvedDependency</code> straight away. The caller then hits its own cache check and
+reuses the value, so no FastAPI code is copied.</p>
+<ul>
+<li><strong>Patch points</strong> — <code>fastapi.dependencies.utils.solve_dependencies</code> (the
+  recursion looks this module global up at every call) and
+  <code>fastapi.routing.solve_dependencies</code> (imported by name; HTTP routes, WebSocket
+  routes and route groups). The root call never receives a cache, so it is never
+  skipped.</li>
+<li><strong>Cache key</strong> — it must be the exact key FastAPI stores the value under: a
+  dataclass field before FastAPI 0.121, <code>Dependant.cache_key</code> as a
+  <code>cached_property</code> up to 0.139, and <code>fastapi.dependencies.models._get_cache_key</code> from 0.140,
+  called with the <code>_uses_scopes_cache</code> memo the recursion threads through.</li>
+<li><strong>The caller's sub-dependency</strong> — when <code>dependency_overrides</code> is not empty,
+  FastAPI rebuilds every sub-dependant, overridden or not, before recursing. The
+  rebuilt dependant always has <code>use_cache=True</code> and drops its own <code>Security</code>
+  scopes, so its key may not be the one the caller checks. The wrapper therefore
+  tests the caller's own sub-dependant: before delegating, it publishes the
+  dependant's sub-dependants in a <code>ContextVar</code>, and each recursive call takes the
+  next one, since FastAPI recurses exactly once per sub-dependant, in order. A
+  sub-dependant whose <code>name</code> or (overridden) <code>call</code> does not match what the
+  recursive call received is never skipped. The <code>ContextVar</code> is per asyncio
+  task, so concurrent requests never share it.</li>
+<li><strong>Guards</strong> — tests fail if FastAPI stops resolving the recursion through the
+  module global, changes the fields of <code>SolvedDependency</code>, keys its request cache
+  differently, or stops recursing once per sub-dependant in order.</li>
+</ul>
 
 
 
