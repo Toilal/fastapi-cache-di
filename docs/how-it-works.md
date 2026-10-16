@@ -96,6 +96,29 @@ allocated at the same address, then wrongly served the dead object's cached
 entry. `DepsCache` holds a strong reference to every keyed object (via
 `keep_alive`) so its address stays reserved for the cache's lifetime.
 
+## Calling loop-safe dependencies inline
+
+FastAPI awaits `fastapi.dependencies.utils.run_in_threadpool(call, **values)` for
+every sub-dependency that is neither a coroutine nor a generator — the only call
+site of that module global, from FastAPI 0.112.4 to 0.143.1.
+`patch_fastapi_run_in_threadpool()` replaces the global: a callable that is
+loop-safe (or any class, with `inline_classes=True`) is called inline, everything
+else is delegated to the function the global held when patching.
+
+- **Why the global, not `Dependant.call`** — rewriting `call` into an `async`
+  factory would change the key FastAPI looks overrides up with and stores values
+  under: an override registered on the original class would no longer be found,
+  and shared sub-dependencies would be built twice once overrides are set.
+  Patching the global leaves the `call`, the cache key and the override lookup
+  untouched.
+- **Overrides** — the `call` the replacement receives is the effective one, after
+  `dependency_overrides`: an override is judged on its own marker.
+- **Not affected** — sync generator dependencies go through
+  `contextmanager_in_threadpool` and sync endpoints through `fastapi.routing`,
+  so both keep their threadpool hop.
+- **Guard** — a test fails if FastAPI stops awaiting sync dependencies through
+  the module global.
+
 ## Skipping cached sub-trees at request time
 
 `solve_dependencies` loops over a dependant's sub-dependencies, recurses into each

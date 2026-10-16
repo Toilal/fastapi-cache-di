@@ -7,9 +7,13 @@ Everything below is exported from the top-level `fastapi_cache_di` package.
 from fastapi_cache_di import (
     DepsCache,
     fastapi_deps_cache,
+    is_loop_safe,
+    loop_safe,
     patch_fastapi_deps_cache,
+    patch_fastapi_run_in_threadpool,
     patch_fastapi_solve_dependencies,
     unpatch_fastapi_deps_cache,
+    unpatch_fastapi_run_in_threadpool,
     unpatch_fastapi_solve_dependencies,
 )
 ```
@@ -65,6 +69,62 @@ summary of the patched functions at `INFO` level. An internally-created cache is
 cache is left populated (entries and counters) for post-hoc inspection.
 
 **Returns** `True` if unpatched, `False` if not currently patched.
+
+## `patch_fastapi_run_in_threadpool`
+
+```python
+patch_fastapi_run_in_threadpool(*, inline_classes: bool = False) -> bool
+```
+
+Call loop-safe sync dependencies directly on the event loop. Replaces
+`fastapi.dependencies.utils.run_in_threadpool`, which FastAPI awaits for every
+sync, non-generator dependency at request time; meant to stay active for the
+app's lifetime. A callable marked with `loop_safe` is called inline; everything
+else still goes through the threadpool. Sync generator dependencies and sync
+endpoints are not affected.
+
+**Parameters**
+
+- `inline_classes`: treat every class as loop-safe, marked or not. Only enable it
+  when no injected class does I/O, takes a lock or computes heavily in its
+  `__init__`.
+
+**Returns** `True` on the first call, `False` if already patched. Re-patching
+with a different `inline_classes` is ignored and logs a warning.
+
+**Raises** `RuntimeError` on a FastAPI version that no longer calls dependencies
+through that global, rather than silently losing the optimization.
+
+## `unpatch_fastapi_run_in_threadpool`
+
+```python
+unpatch_fastapi_run_in_threadpool() -> bool
+```
+
+Restore FastAPI's `run_in_threadpool` for dependencies.
+
+**Returns** `True` if unpatched, `False` if not currently patched.
+
+## `loop_safe`
+
+```python
+loop_safe(obj: T) -> T
+```
+
+Mark a sync function or a class as safe to call on the event loop, by setting
+its `__fastapi_loop_safe__` attribute. Returns `obj` itself, so `Depends(obj)`
+and `dependency_overrides[obj]` keep working. A loop-safe callable must never
+block.
+
+## `is_loop_safe`
+
+```python
+is_loop_safe(call: Callable[..., Any]) -> bool
+```
+
+`True` if `call` itself carries the loop-safe marker. The marker is read from the
+object's own namespace, never inherited; `functools.partial` wrappers are
+unwrapped, and a bound method follows its function's marker.
 
 ## `patch_fastapi_solve_dependencies`
 

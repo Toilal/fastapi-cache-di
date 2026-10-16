@@ -3,6 +3,7 @@
 import asyncio
 import dataclasses
 import inspect
+import threading
 from collections.abc import AsyncIterator, Callable, Iterator
 from pathlib import Path
 from typing import Annotated, Any
@@ -29,8 +30,10 @@ from fastapi.testclient import TestClient
 from fastapi_cache_di import (
     fastapi_deps_cache,
     patch_fastapi_deps_cache,
+    patch_fastapi_run_in_threadpool,
     patch_fastapi_solve_dependencies,
     unpatch_fastapi_deps_cache,
+    unpatch_fastapi_run_in_threadpool,
     unpatch_fastapi_solve_dependencies,
 )
 from fastapi_cache_di import patch as patch_module
@@ -46,9 +49,11 @@ requires_dependency_scope = pytest.mark.skipif(
 @pytest.fixture(autouse=True)
 def _ensure_unpatched() -> Iterator[None]:
     unpatch_fastapi_solve_dependencies()
+    unpatch_fastapi_run_in_threadpool()
     unpatch_fastapi_deps_cache()
     yield
     unpatch_fastapi_solve_dependencies()
+    unpatch_fastapi_run_in_threadpool()
     unpatch_fastapi_deps_cache()
 
 
@@ -192,6 +197,45 @@ class TestPatchUnpatch:
         with fastapi_deps_cache():
             assert _dep_utils.solve_dependencies is patched
         assert _dep_utils.solve_dependencies is patched
+
+    def test_independent_of_the_run_in_threadpool_pair(self) -> None:
+        patch_fastapi_solve_dependencies()
+        patched_solve = _dep_utils.solve_dependencies
+
+        assert patch_fastapi_run_in_threadpool() is True
+        patched_run = _dep_utils.run_in_threadpool
+        assert unpatch_fastapi_solve_dependencies() is True
+        assert _dep_utils.run_in_threadpool is patched_run
+
+        assert patch_fastapi_solve_dependencies() is True
+        assert unpatch_fastapi_run_in_threadpool() is True
+        assert _dep_utils.solve_dependencies is patched_solve
+        assert unpatch_fastapi_solve_dependencies() is True
+
+    def test_both_runtime_patches_combine(self) -> None:
+        threads: list[int] = []
+
+        class Dal:
+            def __init__(self) -> None:
+                threads.append(threading.get_ident())
+
+        class Repo:
+            def __init__(self, dal: Annotated[Dal, Depends()]) -> None:
+                self.dal = dal
+
+        app = FastAPI()
+
+        @app.get("/")
+        async def endpoint(
+            repo: Annotated[Repo, Depends()], dal: Annotated[Dal, Depends()]
+        ) -> bool:
+            return repo.dal is dal and threads == [threading.get_ident()]
+
+        patch_fastapi_run_in_threadpool(inline_classes=True)
+        patch_fastapi_solve_dependencies()
+
+        assert _responses(lambda: app, "/")[0][1] is True
+        assert len(threads) == 1
 
 
 # ---------------------------------------------------------------------------
