@@ -9,6 +9,7 @@ from typing import Annotated, Any
 
 import fastapi.dependencies.utils as _dep_utils
 import fastapi.routing as _routing
+import httpx
 import pytest
 from fastapi import (
     APIRouter,
@@ -860,3 +861,77 @@ class TestCallerSubDependant:
 
         assert roots == [root]
         assert next(pending) is leaf
+
+    def test_pending_sub_dependants_are_restored_when_solving_fails(self) -> None:
+        async def solve(**kwargs: Any) -> None:
+            raise RuntimeError("boom")
+
+        async def scenario() -> Any:
+            root = get_dependant(path="/", call=_parent)
+            with pytest.raises(RuntimeError, match="boom"):
+                await patch_module._solve_dependencies_skipping_cached(dependant=root)
+            return patch_module._pending_sub_dependants.get()
+
+        patch_module._original_solve_dependencies = solve
+        try:
+            assert asyncio.run(scenario()) is None
+        finally:
+            patch_module._original_solve_dependencies = None
+
+    def test_concurrent_requests_do_not_share_pending_sub_dependants(
+        self, walks: list[Callable[..., Any]]
+    ) -> None:
+        # Both requests pause inside a dependency body, mid-walk; the first one
+        # then finishes its walk while the second is still paused, so the walks
+        # interleave instead of nesting.
+        async def scenario() -> list[Any]:
+            arrived: list[str] = []
+            both_arrived = asyncio.Event()
+
+            async def db() -> str:
+                return "db"
+
+            async def repo(dal: Annotated[str, Depends(db)]) -> str:
+                return f"repo({dal})"
+
+            async def wait_for_the_other_request(
+                dal: Annotated[str, Depends(db)],
+            ) -> str:
+                arrived.append(dal)
+                if len(arrived) == 2:
+                    both_arrived.set()
+                    await asyncio.sleep(0.05)
+                await asyncio.wait_for(both_arrived.wait(), timeout=5)
+                return dal
+
+            app = FastAPI()
+
+            @app.get("/a")
+            async def endpoint_a(
+                waited: Annotated[str, Depends(wait_for_the_other_request)],
+                repository: Annotated[str, Depends(repo)],
+                dal: Annotated[str, Depends(db)],
+            ) -> list[str]:
+                return [waited, repository, dal]
+
+            @app.get("/b")
+            async def endpoint_b(
+                waited: Annotated[str, Depends(wait_for_the_other_request)],
+                dal: Annotated[str, Depends(db)],
+            ) -> list[str]:
+                return [waited, dal]
+
+            transport = httpx.ASGITransport(app=app)
+            async with httpx.AsyncClient(
+                transport=transport, base_url="http://test"
+            ) as client:
+                responses = await asyncio.gather(client.get("/a"), client.get("/b"))
+            return [r.json() for r in responses]
+
+        patch_fastapi_solve_dependencies()
+
+        assert asyncio.run(scenario()) == [["db", "repo(db)", "db"], ["db", "db"]]
+        request_a = ["endpoint_a", "wait_for_the_other_request", "db", "repo"]
+        request_b = ["endpoint_b", "wait_for_the_other_request", "db"]
+        names = sorted(getattr(call, "__name__", "") for call in walks)
+        assert names == sorted([*request_a, *request_b])
