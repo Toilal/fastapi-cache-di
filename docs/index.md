@@ -64,8 +64,9 @@ That is all it takes: introspection results are memoized while routes are being
 registered, and FastAPI's original functions are restored when the block exits.
 
 See the [usage guide](./usage.md) for manual patching, sharing and inspecting a
-cache, thread-safety notes, and the opt-in runtime patch that skips re-walking the
-sub-tree of dependencies already cached for a request. See [how it works](./how-it-works.md) for the
+cache, thread-safety notes, and the opt-in runtime patches that call loop-safe
+dependencies on the event loop and skip re-walking the sub-tree of dependencies
+already cached for a request. See [how it works](./how-it-works.md) for the
 caching internals, and the [API reference](./api.md) for the full public API.
 
 Requirements

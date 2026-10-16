@@ -34,14 +34,22 @@ and free memory — or use the :func:`fastapi_deps_cache` context manager.
    keeps them after unpatch); re-entrancy of the context manager is handled by
    :func:`patch_fastapi_deps_cache` returning ``False`` when already active.
 
-Separately, :func:`patch_fastapi_solve_dependencies` cuts a **per-request**
-cost: ``solve_dependencies`` walks the whole sub-tree of every sub-dependency
-before checking whether its value is already in the request's
-``dependency_cache``, so a dependency shared across a deep tree is re-solved at
-every occurrence. The patch returns early for a sub-dependency whose value is
-already cached; the caller then reuses that value through its own cache check.
-Unlike the deps cache, it is meant to stay active for the app's lifetime, and it
-is independent of it: either pair can be used without the other.
+Separately, :func:`patch_fastapi_run_in_threadpool` cuts a **per-request**
+cost: FastAPI calls every sync, non-generator dependency (every class, every
+plain ``def``) through ``run_in_threadpool``, a thread hop that costs far more
+than a trivial ``__init__``. The patch replaces the module global
+``fastapi.dependencies.utils.run_in_threadpool`` so that loop-safe callables
+(see :mod:`fastapi_cache_di.execution`) are called inline on the event loop.
+Unlike the deps cache, it is meant to stay active for the app's lifetime, and
+it is independent of it: either pair can be used without the other.
+
+:func:`patch_fastapi_solve_dependencies` cuts another per-request cost:
+``solve_dependencies`` walks the whole sub-tree of every sub-dependency before
+checking whether its value is already in the request's ``dependency_cache``, so a
+dependency shared across a deep tree is re-solved at every occurrence. The patch
+returns early for a sub-dependency whose value is already cached; the caller then
+reuses that value through its own cache check. It is a lifetime patch too, and
+independent of both other pairs.
 """
 
 import copy
@@ -60,8 +68,10 @@ import fastapi.openapi.utils as _openapi_utils
 import fastapi.routing as _routing
 from fastapi.dependencies.models import Dependant
 from fastapi.utils import get_path_param_names
+from starlette.concurrency import run_in_threadpool
 
 from fastapi_cache_di.cache import DepsCache
+from fastapi_cache_di.execution import is_loop_safe
 
 logger = logging.getLogger(__name__)
 
@@ -460,6 +470,90 @@ def fastapi_deps_cache(
     finally:
         if patched:
             unpatch_fastapi_deps_cache()
+
+
+# ---------------------------------------------------------------------------
+# run_in_threadpool: call loop-safe dependencies inline
+# ---------------------------------------------------------------------------
+
+_original_run_in_threadpool: Callable[..., Awaitable[Any]] | None = None
+_inline_classes = False
+
+
+async def _run_in_threadpool_unless_loop_safe(
+    func: Callable[..., Any], *args: Any, **kwargs: Any
+) -> Any:
+    # ``func`` is the effective call, after ``dependency_overrides``: an
+    # override is judged on its own marker, never on the original's.
+    if (_inline_classes and inspect.isclass(func)) or is_loop_safe(func):
+        return func(*args, **kwargs)
+    # A request already past the global lookup when unpatch runs still lands
+    # here; Starlette's function is what FastAPI would have called anyway.
+    original = _original_run_in_threadpool or run_in_threadpool
+    return await original(func, *args, **kwargs)
+
+
+def patch_fastapi_run_in_threadpool(*, inline_classes: bool = False) -> bool:
+    """Call loop-safe sync dependencies directly on the event loop.
+
+    Replaces ``fastapi.dependencies.utils.run_in_threadpool``, which FastAPI
+    awaits for every sync, non-generator dependency at request time. A callable
+    marked with :func:`~fastapi_cache_di.execution.loop_safe` is then called
+    inline; everything else still goes through the threadpool. Sync generator
+    dependencies and sync endpoints never go through this global and are not
+    affected.
+
+    Parameters
+    ----------
+    inline_classes:
+        Treat every class as loop-safe, marked or not. Only enable it when no
+        injected class does I/O, takes a lock or computes heavily in its
+        ``__init__``: a blocking call inline stalls every in-flight request.
+
+    Returns ``True`` on the first call, ``False`` if already patched. Raises
+    :class:`RuntimeError` on a FastAPI that no longer calls dependencies through
+    this global, rather than silently losing the optimization.
+    """
+    global _original_run_in_threadpool, _inline_classes
+
+    if not hasattr(_dep_utils, "run_in_threadpool"):
+        raise RuntimeError(
+            f"patch_fastapi_run_in_threadpool: FastAPI {fastapi.__version__} no "
+            "longer calls dependencies through "
+            "fastapi.dependencies.utils.run_in_threadpool; this version is not "
+            "supported. Remove the patch or pin a supported FastAPI version."
+        )
+
+    if _original_run_in_threadpool is not None:
+        if inline_classes != _inline_classes:
+            logger.warning(
+                "patch_fastapi_run_in_threadpool: already active with "
+                "inline_classes=%s; the new value was ignored. Unpatch before "
+                "patching with a different value.",
+                _inline_classes,
+            )
+        return False
+
+    _original_run_in_threadpool = _dep_utils.run_in_threadpool
+    _inline_classes = inline_classes
+    _dep_utils.run_in_threadpool = _run_in_threadpool_unless_loop_safe
+    return True
+
+
+def unpatch_fastapi_run_in_threadpool() -> bool:
+    """Restore FastAPI's ``run_in_threadpool`` for dependencies.
+
+    Returns ``True`` if unpatched, ``False`` if not currently patched.
+    """
+    global _original_run_in_threadpool, _inline_classes
+
+    if _original_run_in_threadpool is None:
+        return False
+
+    _dep_utils.run_in_threadpool = _original_run_in_threadpool  # type: ignore[attr-defined,assignment]
+    _original_run_in_threadpool = None
+    _inline_classes = False
+    return True
 
 
 # ---------------------------------------------------------------------------

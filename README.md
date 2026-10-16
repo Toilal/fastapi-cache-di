@@ -47,6 +47,55 @@ with fastapi_deps_cache():
 Manual patch/unpatch, sharing and inspecting the cache, and the cache-key details
 are covered in the documentation.
 
+## Calling loop-safe dependencies inline
+
+At **request time**, FastAPI calls every dependency that is neither a coroutine
+nor a generator through the threadpool: every `Depends(SomeClass)` and every
+plain `def` dependency costs a round trip to a worker thread, often far more
+than a class whose `__init__` only stores its arguments.
+
+`patch_fastapi_run_in_threadpool()` lets such dependencies run directly on the
+event loop. It is opt-in, because the library cannot tell whether a call blocks:
+
+- `loop_safe` marks one sync function or class (it returns the same object, so
+  `Depends(...)` and `dependency_overrides` keep working);
+- `inline_classes=True` treats every class as loop-safe;
+- everything else still goes through the threadpool, as do sync generator
+  dependencies and sync endpoints.
+
+```python
+from typing import Annotated
+
+from fastapi import Depends, FastAPI
+
+from fastapi_cache_di import loop_safe, patch_fastapi_run_in_threadpool
+
+patch_fastapi_run_in_threadpool(inline_classes=True)
+
+
+@loop_safe
+def get_tenant_id() -> str:
+    return "acme"
+
+
+class UserRepository:
+    def __init__(self, tenant_id: Annotated[str, Depends(get_tenant_id)]) -> None:
+        self.tenant_id = tenant_id
+
+
+app = FastAPI()
+
+
+@app.get("/users")
+async def list_users(repo: Annotated[UserRepository, Depends()]) -> str:
+    return repo.tenant_id
+```
+
+**A loop-safe callable must never block**: no I/O, no lock, no heavy
+computation. A blocking call on the event loop stalls every in-flight request.
+See the documentation for overrides and the marker shared with
+[fastapi-standalone-di](https://github.com/Toilal/fastapi-standalone-di).
+
 ## Skipping the sub-tree of cached dependencies
 
 At **request time**, FastAPI solves the whole sub-tree of a dependency before

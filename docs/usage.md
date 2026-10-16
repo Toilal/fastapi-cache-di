@@ -8,7 +8,9 @@ are being included / routes registered — and torn down afterwards.
 There are three ways to drive it: the context manager, manual patch/unpatch, and
 a caller-owned shared cache you can inspect afterwards.
 
-Separately, an opt-in runtime patch cuts a per-request cost, see
+Separately, two opt-in runtime patches cut per-request costs, see
+[Calling loop-safe dependencies inline](#calling-loop-safe-dependencies-inline)
+and
 [Skipping the sub-tree of cached dependencies](#skipping-the-sub-tree-of-cached-dependencies).
 
 ## Context manager (recommended)
@@ -135,6 +137,70 @@ Calling `patch_fastapi_deps_cache(deps_cache=...)` while a patch is already
 active keeps the **existing** cache and logs a warning — the new cache is ignored
 until you `unpatch` first.
 
+## Calling loop-safe dependencies inline
+
+At **request time**, FastAPI calls every dependency that is neither a coroutine
+nor a generator through the threadpool: every `Depends(SomeClass)` and every
+plain `def` dependency costs a round trip to a worker thread, often far more
+than a class whose `__init__` only stores its arguments.
+
+`patch_fastapi_run_in_threadpool()` lets such dependencies run directly on the
+event loop. It is opt-in, because the library cannot tell whether a call blocks:
+
+- `loop_safe` marks one sync function or class (it returns the same object, so
+  `Depends(...)` and `dependency_overrides` keep working);
+- `inline_classes=True` treats every class as loop-safe;
+- everything else still goes through the threadpool, as do sync generator
+  dependencies and sync endpoints.
+
+```python
+from typing import Annotated
+
+from fastapi import Depends, FastAPI
+
+from fastapi_cache_di import loop_safe, patch_fastapi_run_in_threadpool
+
+patch_fastapi_run_in_threadpool(inline_classes=True)
+
+
+@loop_safe
+def get_tenant_id() -> str:
+    return "acme"
+
+
+class UserRepository:
+    def __init__(self, tenant_id: Annotated[str, Depends(get_tenant_id)]) -> None:
+        self.tenant_id = tenant_id
+
+
+app = FastAPI()
+
+
+@app.get("/users")
+async def list_users(repo: Annotated[UserRepository, Depends()]) -> str:
+    return repo.tenant_id
+```
+
+Unlike the dependency cache, this patch stays active for the app's lifetime;
+`unpatch_fastapi_run_in_threadpool()` restores FastAPI's behavior. The patches
+of this library are independent: any of them can be used without the others.
+
+!!! warning
+    **A loop-safe callable must never block**: no I/O, no lock, no heavy
+    computation. A blocking call on the event loop stalls every in-flight
+    request. A JWT dependency that fetches its signing keys over HTTP when they
+    are not cached, for instance, must stay in the threadpool. The marker is
+    never inherited: a subclass of a marked class must be marked on its own.
+
+An override in `dependency_overrides` is judged on its own marker, not on the
+original's: an unmarked override (a test lambda, for instance) goes through the
+threadpool.
+
+The marker is the `__fastapi_loop_safe__` attribute, a contract shared with
+[fastapi-standalone-di](https://github.com/Toilal/fastapi-standalone-di): an
+object marked by either library's `loop_safe` is recognised by both, without one
+depending on the other.
+
 ## Skipping the sub-tree of cached dependencies
 
 At **request time**, FastAPI solves the whole sub-tree of a dependency before
@@ -159,8 +225,7 @@ patch_fastapi_solve_dependencies()
 app = FastAPI()
 ```
 
-`unpatch_fastapi_solve_dependencies()` restores FastAPI's behavior. The two
-patches are independent: either can be used without the other.
+`unpatch_fastapi_solve_dependencies()` restores FastAPI's behavior.
 
 The values injected into endpoints are unchanged. The only visible difference: a
 `use_cache=False` dependency nested under a cached dependency is no longer called
