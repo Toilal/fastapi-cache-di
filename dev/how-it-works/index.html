@@ -406,6 +406,17 @@
 </li>
       
         <li class="md-nav__item">
+  <a href="#calling-loop-safe-dependencies-inline" class="md-nav__link">
+    <span class="md-ellipsis">
+      <span class="md-typeset">
+        Calling loop-safe dependencies inline
+      </span>
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
   <a href="#skipping-cached-sub-trees-at-request-time" class="md-nav__link">
     <span class="md-ellipsis">
       <span class="md-typeset">
@@ -539,6 +550,17 @@
     <span class="md-ellipsis">
       <span class="md-typeset">
         <code>id()</code> recycling protection
+      </span>
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#calling-loop-safe-dependencies-inline" class="md-nav__link">
+    <span class="md-ellipsis">
+      <span class="md-typeset">
+        Calling loop-safe dependencies inline
       </span>
     </span>
   </a>
@@ -699,6 +721,28 @@ collected, so a short-lived callable could be collected and a later object
 allocated at the same address, then wrongly served the dead object's cached
 entry. <code>DepsCache</code> holds a strong reference to every keyed object (via
 <code>keep_alive</code>) so its address stays reserved for the cache's lifetime.</p>
+<h2 id="calling-loop-safe-dependencies-inline">Calling loop-safe dependencies inline<a class="headerlink" href="#calling-loop-safe-dependencies-inline" title="Permanent link">&para;</a></h2>
+<p>FastAPI awaits <code>fastapi.dependencies.utils.run_in_threadpool(call, **values)</code> for
+every sub-dependency that is neither a coroutine nor a generator — the only call
+site of that module global, from FastAPI 0.112.4 to 0.143.1.
+<code>patch_fastapi_run_in_threadpool()</code> replaces the global: a callable that is
+loop-safe (or any class, with <code>inline_classes=True</code>) is called inline, everything
+else is delegated to the function the global held when patching.</p>
+<ul>
+<li><strong>Why the global, not <code>Dependant.call</code></strong> — rewriting <code>call</code> into an <code>async</code>
+  factory would change the key FastAPI looks overrides up with and stores values
+  under: an override registered on the original class would no longer be found,
+  and shared sub-dependencies would be built twice once overrides are set.
+  Patching the global leaves the <code>call</code>, the cache key and the override lookup
+  untouched.</li>
+<li><strong>Overrides</strong> — the <code>call</code> the replacement receives is the effective one, after
+  <code>dependency_overrides</code>: an override is judged on its own marker.</li>
+<li><strong>Not affected</strong> — sync generator dependencies go through
+  <code>contextmanager_in_threadpool</code> and sync endpoints through <code>fastapi.routing</code>,
+  so both keep their threadpool hop.</li>
+<li><strong>Guard</strong> — a test fails if FastAPI stops awaiting sync dependencies through
+  the module global.</li>
+</ul>
 <h2 id="skipping-cached-sub-trees-at-request-time">Skipping cached sub-trees at request time<a class="headerlink" href="#skipping-cached-sub-trees-at-request-time" title="Permanent link">&para;</a></h2>
 <p><code>solve_dependencies</code> loops over a dependant's sub-dependencies, recurses into each
 one, and only then checks whether the sub-dependency's value is already in the

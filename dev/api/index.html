@@ -408,6 +408,50 @@
 </li>
       
         <li class="md-nav__item">
+  <a href="#patch_fastapi_run_in_threadpool" class="md-nav__link">
+    <span class="md-ellipsis">
+      <span class="md-typeset">
+        <code>patch_fastapi_run_in_threadpool</code>
+      </span>
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#unpatch_fastapi_run_in_threadpool" class="md-nav__link">
+    <span class="md-ellipsis">
+      <span class="md-typeset">
+        <code>unpatch_fastapi_run_in_threadpool</code>
+      </span>
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#loop_safe" class="md-nav__link">
+    <span class="md-ellipsis">
+      <span class="md-typeset">
+        <code>loop_safe</code>
+      </span>
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#is_loop_safe" class="md-nav__link">
+    <span class="md-ellipsis">
+      <span class="md-typeset">
+        <code>is_loop_safe</code>
+      </span>
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
   <a href="#patch_fastapi_solve_dependencies" class="md-nav__link">
     <span class="md-ellipsis">
       <span class="md-typeset">
@@ -533,6 +577,50 @@
 </li>
       
         <li class="md-nav__item">
+  <a href="#patch_fastapi_run_in_threadpool" class="md-nav__link">
+    <span class="md-ellipsis">
+      <span class="md-typeset">
+        <code>patch_fastapi_run_in_threadpool</code>
+      </span>
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#unpatch_fastapi_run_in_threadpool" class="md-nav__link">
+    <span class="md-ellipsis">
+      <span class="md-typeset">
+        <code>unpatch_fastapi_run_in_threadpool</code>
+      </span>
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#loop_safe" class="md-nav__link">
+    <span class="md-ellipsis">
+      <span class="md-typeset">
+        <code>loop_safe</code>
+      </span>
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#is_loop_safe" class="md-nav__link">
+    <span class="md-ellipsis">
+      <span class="md-typeset">
+        <code>is_loop_safe</code>
+      </span>
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
   <a href="#patch_fastapi_solve_dependencies" class="md-nav__link">
     <span class="md-ellipsis">
       <span class="md-typeset">
@@ -620,11 +708,15 @@
 <div class="language-python highlight"><pre><span></span><code><span id="__span-0-1"><a id="__codelineno-0-1" name="__codelineno-0-1" href="#__codelineno-0-1"></a><span class="kn">from</span><span class="w"> </span><span class="nn">fastapi_cache_di</span><span class="w"> </span><span class="kn">import</span> <span class="p">(</span>
 </span><span id="__span-0-2"><a id="__codelineno-0-2" name="__codelineno-0-2" href="#__codelineno-0-2"></a>    <span class="n">DepsCache</span><span class="p">,</span>
 </span><span id="__span-0-3"><a id="__codelineno-0-3" name="__codelineno-0-3" href="#__codelineno-0-3"></a>    <span class="n">fastapi_deps_cache</span><span class="p">,</span>
-</span><span id="__span-0-4"><a id="__codelineno-0-4" name="__codelineno-0-4" href="#__codelineno-0-4"></a>    <span class="n">patch_fastapi_deps_cache</span><span class="p">,</span>
-</span><span id="__span-0-5"><a id="__codelineno-0-5" name="__codelineno-0-5" href="#__codelineno-0-5"></a>    <span class="n">patch_fastapi_solve_dependencies</span><span class="p">,</span>
-</span><span id="__span-0-6"><a id="__codelineno-0-6" name="__codelineno-0-6" href="#__codelineno-0-6"></a>    <span class="n">unpatch_fastapi_deps_cache</span><span class="p">,</span>
-</span><span id="__span-0-7"><a id="__codelineno-0-7" name="__codelineno-0-7" href="#__codelineno-0-7"></a>    <span class="n">unpatch_fastapi_solve_dependencies</span><span class="p">,</span>
-</span><span id="__span-0-8"><a id="__codelineno-0-8" name="__codelineno-0-8" href="#__codelineno-0-8"></a><span class="p">)</span>
+</span><span id="__span-0-4"><a id="__codelineno-0-4" name="__codelineno-0-4" href="#__codelineno-0-4"></a>    <span class="n">is_loop_safe</span><span class="p">,</span>
+</span><span id="__span-0-5"><a id="__codelineno-0-5" name="__codelineno-0-5" href="#__codelineno-0-5"></a>    <span class="n">loop_safe</span><span class="p">,</span>
+</span><span id="__span-0-6"><a id="__codelineno-0-6" name="__codelineno-0-6" href="#__codelineno-0-6"></a>    <span class="n">patch_fastapi_deps_cache</span><span class="p">,</span>
+</span><span id="__span-0-7"><a id="__codelineno-0-7" name="__codelineno-0-7" href="#__codelineno-0-7"></a>    <span class="n">patch_fastapi_run_in_threadpool</span><span class="p">,</span>
+</span><span id="__span-0-8"><a id="__codelineno-0-8" name="__codelineno-0-8" href="#__codelineno-0-8"></a>    <span class="n">patch_fastapi_solve_dependencies</span><span class="p">,</span>
+</span><span id="__span-0-9"><a id="__codelineno-0-9" name="__codelineno-0-9" href="#__codelineno-0-9"></a>    <span class="n">unpatch_fastapi_deps_cache</span><span class="p">,</span>
+</span><span id="__span-0-10"><a id="__codelineno-0-10" name="__codelineno-0-10" href="#__codelineno-0-10"></a>    <span class="n">unpatch_fastapi_run_in_threadpool</span><span class="p">,</span>
+</span><span id="__span-0-11"><a id="__codelineno-0-11" name="__codelineno-0-11" href="#__codelineno-0-11"></a>    <span class="n">unpatch_fastapi_solve_dependencies</span><span class="p">,</span>
+</span><span id="__span-0-12"><a id="__codelineno-0-12" name="__codelineno-0-12" href="#__codelineno-0-12"></a><span class="p">)</span>
 </span></code></pre></div>
 <h2 id="fastapi_deps_cache"><code>fastapi_deps_cache</code><a class="headerlink" href="#fastapi_deps_cache" title="Permanent link">&para;</a></h2>
 <div class="language-python highlight"><pre><span></span><code><span id="__span-1-1"><a id="__codelineno-1-1" name="__codelineno-1-1" href="#__codelineno-1-1"></a><span class="n">fastapi_deps_cache</span><span class="p">(</span><span class="o">*</span><span class="p">,</span> <span class="n">deps_cache</span><span class="p">:</span> <span class="n">DepsCache</span> <span class="o">|</span> <span class="nb">bool</span> <span class="o">=</span> <span class="kc">True</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="n">ContextManager</span><span class="p">[</span><span class="kc">None</span><span class="p">]</span>
@@ -665,8 +757,45 @@ and a warning is logged.</p>
 summary of the patched functions at <code>INFO</code> level. An internally-created cache is cleared; a caller-owned
 cache is left populated (entries and counters) for post-hoc inspection.</p>
 <p><strong>Returns</strong> <code>True</code> if unpatched, <code>False</code> if not currently patched.</p>
+<h2 id="patch_fastapi_run_in_threadpool"><code>patch_fastapi_run_in_threadpool</code><a class="headerlink" href="#patch_fastapi_run_in_threadpool" title="Permanent link">&para;</a></h2>
+<div class="language-python highlight"><pre><span></span><code><span id="__span-4-1"><a id="__codelineno-4-1" name="__codelineno-4-1" href="#__codelineno-4-1"></a><span class="n">patch_fastapi_run_in_threadpool</span><span class="p">(</span><span class="o">*</span><span class="p">,</span> <span class="n">inline_classes</span><span class="p">:</span> <span class="nb">bool</span> <span class="o">=</span> <span class="kc">False</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="nb">bool</span>
+</span></code></pre></div>
+<p>Call loop-safe sync dependencies directly on the event loop. Replaces
+<code>fastapi.dependencies.utils.run_in_threadpool</code>, which FastAPI awaits for every
+sync, non-generator dependency at request time; meant to stay active for the
+app's lifetime. A callable marked with <code>loop_safe</code> is called inline; everything
+else still goes through the threadpool. Sync generator dependencies and sync
+endpoints are not affected.</p>
+<p><strong>Parameters</strong></p>
+<ul>
+<li><code>inline_classes</code>: treat every class as loop-safe, marked or not. Only enable it
+  when no injected class does I/O, takes a lock or computes heavily in its
+  <code>__init__</code>.</li>
+</ul>
+<p><strong>Returns</strong> <code>True</code> on the first call, <code>False</code> if already patched. Re-patching
+with a different <code>inline_classes</code> is ignored and logs a warning.</p>
+<p><strong>Raises</strong> <code>RuntimeError</code> on a FastAPI version that no longer calls dependencies
+through that global, rather than silently losing the optimization.</p>
+<h2 id="unpatch_fastapi_run_in_threadpool"><code>unpatch_fastapi_run_in_threadpool</code><a class="headerlink" href="#unpatch_fastapi_run_in_threadpool" title="Permanent link">&para;</a></h2>
+<div class="language-python highlight"><pre><span></span><code><span id="__span-5-1"><a id="__codelineno-5-1" name="__codelineno-5-1" href="#__codelineno-5-1"></a><span class="n">unpatch_fastapi_run_in_threadpool</span><span class="p">()</span> <span class="o">-&gt;</span> <span class="nb">bool</span>
+</span></code></pre></div>
+<p>Restore FastAPI's <code>run_in_threadpool</code> for dependencies.</p>
+<p><strong>Returns</strong> <code>True</code> if unpatched, <code>False</code> if not currently patched.</p>
+<h2 id="loop_safe"><code>loop_safe</code><a class="headerlink" href="#loop_safe" title="Permanent link">&para;</a></h2>
+<div class="language-python highlight"><pre><span></span><code><span id="__span-6-1"><a id="__codelineno-6-1" name="__codelineno-6-1" href="#__codelineno-6-1"></a><span class="n">loop_safe</span><span class="p">(</span><span class="n">obj</span><span class="p">:</span> <span class="n">T</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="n">T</span>
+</span></code></pre></div>
+<p>Mark a sync function or a class as safe to call on the event loop, by setting
+its <code>__fastapi_loop_safe__</code> attribute. Returns <code>obj</code> itself, so <code>Depends(obj)</code>
+and <code>dependency_overrides[obj]</code> keep working. A loop-safe callable must never
+block.</p>
+<h2 id="is_loop_safe"><code>is_loop_safe</code><a class="headerlink" href="#is_loop_safe" title="Permanent link">&para;</a></h2>
+<div class="language-python highlight"><pre><span></span><code><span id="__span-7-1"><a id="__codelineno-7-1" name="__codelineno-7-1" href="#__codelineno-7-1"></a><span class="n">is_loop_safe</span><span class="p">(</span><span class="n">call</span><span class="p">:</span> <span class="n">Callable</span><span class="p">[</span><span class="o">...</span><span class="p">,</span> <span class="n">Any</span><span class="p">])</span> <span class="o">-&gt;</span> <span class="nb">bool</span>
+</span></code></pre></div>
+<p><code>True</code> if <code>call</code> itself carries the loop-safe marker. The marker is read from the
+object's own namespace, never inherited; <code>functools.partial</code> wrappers are
+unwrapped, and a bound method follows its function's marker.</p>
 <h2 id="patch_fastapi_solve_dependencies"><code>patch_fastapi_solve_dependencies</code><a class="headerlink" href="#patch_fastapi_solve_dependencies" title="Permanent link">&para;</a></h2>
-<div class="language-python highlight"><pre><span></span><code><span id="__span-4-1"><a id="__codelineno-4-1" name="__codelineno-4-1" href="#__codelineno-4-1"></a><span class="n">patch_fastapi_solve_dependencies</span><span class="p">()</span> <span class="o">-&gt;</span> <span class="nb">bool</span>
+<div class="language-python highlight"><pre><span></span><code><span id="__span-8-1"><a id="__codelineno-8-1" name="__codelineno-8-1" href="#__codelineno-8-1"></a><span class="n">patch_fastapi_solve_dependencies</span><span class="p">()</span> <span class="o">-&gt;</span> <span class="nb">bool</span>
 </span></code></pre></div>
 <p>Skip re-walking the sub-tree of dependencies already solved for a request.
 Replaces <code>solve_dependencies</code> in <code>fastapi.dependencies.utils</code> and
@@ -677,12 +806,12 @@ the dependency cache.</p>
 <code>solve_dependencies</code> in either module, rather than silently losing the
 optimization.</p>
 <h2 id="unpatch_fastapi_solve_dependencies"><code>unpatch_fastapi_solve_dependencies</code><a class="headerlink" href="#unpatch_fastapi_solve_dependencies" title="Permanent link">&para;</a></h2>
-<div class="language-python highlight"><pre><span></span><code><span id="__span-5-1"><a id="__codelineno-5-1" name="__codelineno-5-1" href="#__codelineno-5-1"></a><span class="n">unpatch_fastapi_solve_dependencies</span><span class="p">()</span> <span class="o">-&gt;</span> <span class="nb">bool</span>
+<div class="language-python highlight"><pre><span></span><code><span id="__span-9-1"><a id="__codelineno-9-1" name="__codelineno-9-1" href="#__codelineno-9-1"></a><span class="n">unpatch_fastapi_solve_dependencies</span><span class="p">()</span> <span class="o">-&gt;</span> <span class="nb">bool</span>
 </span></code></pre></div>
 <p>Restore FastAPI's <code>solve_dependencies</code> in both modules.</p>
 <p><strong>Returns</strong> <code>True</code> if unpatched, <code>False</code> if not currently patched.</p>
 <h2 id="depscache"><code>DepsCache</code><a class="headerlink" href="#depscache" title="Permanent link">&para;</a></h2>
-<div class="language-python highlight"><pre><span></span><code><span id="__span-6-1"><a id="__codelineno-6-1" name="__codelineno-6-1" href="#__codelineno-6-1"></a><span class="n">DepsCache</span><span class="p">()</span>
+<div class="language-python highlight"><pre><span></span><code><span id="__span-10-1"><a id="__codelineno-10-1" name="__codelineno-10-1" href="#__codelineno-10-1"></a><span class="n">DepsCache</span><span class="p">()</span>
 </span></code></pre></div>
 <p>Unified backing store for the three levels of memoized introspection data. The
 hit/miss counters live on the instance (not on module globals), so a

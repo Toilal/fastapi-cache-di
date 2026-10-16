@@ -369,6 +369,17 @@
 </li>
       
         <li class="md-nav__item">
+  <a href="#calling-loop-safe-dependencies-inline" class="md-nav__link">
+    <span class="md-ellipsis">
+      <span class="md-typeset">
+        Calling loop-safe dependencies inline
+      </span>
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
   <a href="#skipping-the-sub-tree-of-cached-dependencies" class="md-nav__link">
     <span class="md-ellipsis">
       <span class="md-typeset">
@@ -524,6 +535,17 @@
 </li>
       
         <li class="md-nav__item">
+  <a href="#calling-loop-safe-dependencies-inline" class="md-nav__link">
+    <span class="md-ellipsis">
+      <span class="md-typeset">
+        Calling loop-safe dependencies inline
+      </span>
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
   <a href="#skipping-the-sub-tree-of-cached-dependencies" class="md-nav__link">
     <span class="md-ellipsis">
       <span class="md-typeset">
@@ -579,7 +601,9 @@ while FastAPI introspects your routes' dependency trees — that is, while route
 are being included / routes registered — and torn down afterwards.</p>
 <p>There are three ways to drive it: the context manager, manual patch/unpatch, and
 a caller-owned shared cache you can inspect afterwards.</p>
-<p>Separately, an opt-in runtime patch cuts a per-request cost, see
+<p>Separately, two opt-in runtime patches cut per-request costs, see
+<a href="#calling-loop-safe-dependencies-inline">Calling loop-safe dependencies inline</a>
+and
 <a href="#skipping-the-sub-tree-of-cached-dependencies">Skipping the sub-tree of cached dependencies</a>.</p>
 <h2 id="context-manager-recommended">Context manager (recommended)<a class="headerlink" href="#context-manager-recommended" title="Permanent link">&para;</a></h2>
 <p><code>fastapi_deps_cache</code> enables caching for the duration of the block, then restores
@@ -707,6 +731,64 @@ globals, a caller-owned cache still exposes its statistics after <code>unpatch</
 <p>Calling <code>patch_fastapi_deps_cache(deps_cache=...)</code> while a patch is already
 active keeps the <strong>existing</strong> cache and logs a warning — the new cache is ignored
 until you <code>unpatch</code> first.</p>
+<h2 id="calling-loop-safe-dependencies-inline">Calling loop-safe dependencies inline<a class="headerlink" href="#calling-loop-safe-dependencies-inline" title="Permanent link">&para;</a></h2>
+<p>At <strong>request time</strong>, FastAPI calls every dependency that is neither a coroutine
+nor a generator through the threadpool: every <code>Depends(SomeClass)</code> and every
+plain <code>def</code> dependency costs a round trip to a worker thread, often far more
+than a class whose <code>__init__</code> only stores its arguments.</p>
+<p><code>patch_fastapi_run_in_threadpool()</code> lets such dependencies run directly on the
+event loop. It is opt-in, because the library cannot tell whether a call blocks:</p>
+<ul>
+<li><code>loop_safe</code> marks one sync function or class (it returns the same object, so
+  <code>Depends(...)</code> and <code>dependency_overrides</code> keep working);</li>
+<li><code>inline_classes=True</code> treats every class as loop-safe;</li>
+<li>everything else still goes through the threadpool, as do sync generator
+  dependencies and sync endpoints.</li>
+</ul>
+<div class="language-python highlight"><pre><span></span><code><span id="__span-4-1"><a id="__codelineno-4-1" name="__codelineno-4-1" href="#__codelineno-4-1"></a><span class="kn">from</span><span class="w"> </span><span class="nn">typing</span><span class="w"> </span><span class="kn">import</span> <span class="n">Annotated</span>
+</span><span id="__span-4-2"><a id="__codelineno-4-2" name="__codelineno-4-2" href="#__codelineno-4-2"></a>
+</span><span id="__span-4-3"><a id="__codelineno-4-3" name="__codelineno-4-3" href="#__codelineno-4-3"></a><span class="kn">from</span><span class="w"> </span><span class="nn">fastapi</span><span class="w"> </span><span class="kn">import</span> <span class="n">Depends</span><span class="p">,</span> <span class="n">FastAPI</span>
+</span><span id="__span-4-4"><a id="__codelineno-4-4" name="__codelineno-4-4" href="#__codelineno-4-4"></a>
+</span><span id="__span-4-5"><a id="__codelineno-4-5" name="__codelineno-4-5" href="#__codelineno-4-5"></a><span class="kn">from</span><span class="w"> </span><span class="nn">fastapi_cache_di</span><span class="w"> </span><span class="kn">import</span> <span class="n">loop_safe</span><span class="p">,</span> <span class="n">patch_fastapi_run_in_threadpool</span>
+</span><span id="__span-4-6"><a id="__codelineno-4-6" name="__codelineno-4-6" href="#__codelineno-4-6"></a>
+</span><span id="__span-4-7"><a id="__codelineno-4-7" name="__codelineno-4-7" href="#__codelineno-4-7"></a><span class="n">patch_fastapi_run_in_threadpool</span><span class="p">(</span><span class="n">inline_classes</span><span class="o">=</span><span class="kc">True</span><span class="p">)</span>
+</span><span id="__span-4-8"><a id="__codelineno-4-8" name="__codelineno-4-8" href="#__codelineno-4-8"></a>
+</span><span id="__span-4-9"><a id="__codelineno-4-9" name="__codelineno-4-9" href="#__codelineno-4-9"></a>
+</span><span id="__span-4-10"><a id="__codelineno-4-10" name="__codelineno-4-10" href="#__codelineno-4-10"></a><span class="nd">@loop_safe</span>
+</span><span id="__span-4-11"><a id="__codelineno-4-11" name="__codelineno-4-11" href="#__codelineno-4-11"></a><span class="k">def</span><span class="w"> </span><span class="nf">get_tenant_id</span><span class="p">()</span> <span class="o">-&gt;</span> <span class="nb">str</span><span class="p">:</span>
+</span><span id="__span-4-12"><a id="__codelineno-4-12" name="__codelineno-4-12" href="#__codelineno-4-12"></a>    <span class="k">return</span> <span class="s2">&quot;acme&quot;</span>
+</span><span id="__span-4-13"><a id="__codelineno-4-13" name="__codelineno-4-13" href="#__codelineno-4-13"></a>
+</span><span id="__span-4-14"><a id="__codelineno-4-14" name="__codelineno-4-14" href="#__codelineno-4-14"></a>
+</span><span id="__span-4-15"><a id="__codelineno-4-15" name="__codelineno-4-15" href="#__codelineno-4-15"></a><span class="k">class</span><span class="w"> </span><span class="nc">UserRepository</span><span class="p">:</span>
+</span><span id="__span-4-16"><a id="__codelineno-4-16" name="__codelineno-4-16" href="#__codelineno-4-16"></a>    <span class="k">def</span><span class="w"> </span><span class="fm">__init__</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="n">tenant_id</span><span class="p">:</span> <span class="n">Annotated</span><span class="p">[</span><span class="nb">str</span><span class="p">,</span> <span class="n">Depends</span><span class="p">(</span><span class="n">get_tenant_id</span><span class="p">)])</span> <span class="o">-&gt;</span> <span class="kc">None</span><span class="p">:</span>
+</span><span id="__span-4-17"><a id="__codelineno-4-17" name="__codelineno-4-17" href="#__codelineno-4-17"></a>        <span class="bp">self</span><span class="o">.</span><span class="n">tenant_id</span> <span class="o">=</span> <span class="n">tenant_id</span>
+</span><span id="__span-4-18"><a id="__codelineno-4-18" name="__codelineno-4-18" href="#__codelineno-4-18"></a>
+</span><span id="__span-4-19"><a id="__codelineno-4-19" name="__codelineno-4-19" href="#__codelineno-4-19"></a>
+</span><span id="__span-4-20"><a id="__codelineno-4-20" name="__codelineno-4-20" href="#__codelineno-4-20"></a><span class="n">app</span> <span class="o">=</span> <span class="n">FastAPI</span><span class="p">()</span>
+</span><span id="__span-4-21"><a id="__codelineno-4-21" name="__codelineno-4-21" href="#__codelineno-4-21"></a>
+</span><span id="__span-4-22"><a id="__codelineno-4-22" name="__codelineno-4-22" href="#__codelineno-4-22"></a>
+</span><span id="__span-4-23"><a id="__codelineno-4-23" name="__codelineno-4-23" href="#__codelineno-4-23"></a><span class="nd">@app</span><span class="o">.</span><span class="n">get</span><span class="p">(</span><span class="s2">&quot;/users&quot;</span><span class="p">)</span>
+</span><span id="__span-4-24"><a id="__codelineno-4-24" name="__codelineno-4-24" href="#__codelineno-4-24"></a><span class="k">async</span> <span class="k">def</span><span class="w"> </span><span class="nf">list_users</span><span class="p">(</span><span class="n">repo</span><span class="p">:</span> <span class="n">Annotated</span><span class="p">[</span><span class="n">UserRepository</span><span class="p">,</span> <span class="n">Depends</span><span class="p">()])</span> <span class="o">-&gt;</span> <span class="nb">str</span><span class="p">:</span>
+</span><span id="__span-4-25"><a id="__codelineno-4-25" name="__codelineno-4-25" href="#__codelineno-4-25"></a>    <span class="k">return</span> <span class="n">repo</span><span class="o">.</span><span class="n">tenant_id</span>
+</span></code></pre></div>
+<p>Unlike the dependency cache, this patch stays active for the app's lifetime;
+<code>unpatch_fastapi_run_in_threadpool()</code> restores FastAPI's behavior. The patches
+of this library are independent: any of them can be used without the others.</p>
+<div class="admonition warning">
+<p class="admonition-title">Warning</p>
+<p><strong>A loop-safe callable must never block</strong>: no I/O, no lock, no heavy
+computation. A blocking call on the event loop stalls every in-flight
+request. A JWT dependency that fetches its signing keys over HTTP when they
+are not cached, for instance, must stay in the threadpool. The marker is
+never inherited: a subclass of a marked class must be marked on its own.</p>
+</div>
+<p>An override in <code>dependency_overrides</code> is judged on its own marker, not on the
+original's: an unmarked override (a test lambda, for instance) goes through the
+threadpool.</p>
+<p>The marker is the <code>__fastapi_loop_safe__</code> attribute, a contract shared with
+<a href="https://github.com/Toilal/fastapi-standalone-di">fastapi-standalone-di</a>: an
+object marked by either library's <code>loop_safe</code> is recognised by both, without one
+depending on the other.</p>
 <h2 id="skipping-the-sub-tree-of-cached-dependencies">Skipping the sub-tree of cached dependencies<a class="headerlink" href="#skipping-the-sub-tree-of-cached-dependencies" title="Permanent link">&para;</a></h2>
 <p>At <strong>request time</strong>, FastAPI solves the whole sub-tree of a dependency before
 checking whether its value is already in the request's cache. The cache saves the
@@ -718,16 +800,15 @@ the number of unique dependencies.</p>
 <p><code>patch_fastapi_solve_dependencies()</code> stops that walk as soon as the value is
 cached; FastAPI then reuses the cached value as before. Unlike the dependency
 cache, it is meant to stay active for the app's lifetime:</p>
-<div class="language-python highlight"><pre><span></span><code><span id="__span-4-1"><a id="__codelineno-4-1" name="__codelineno-4-1" href="#__codelineno-4-1"></a><span class="kn">from</span><span class="w"> </span><span class="nn">fastapi</span><span class="w"> </span><span class="kn">import</span> <span class="n">FastAPI</span>
-</span><span id="__span-4-2"><a id="__codelineno-4-2" name="__codelineno-4-2" href="#__codelineno-4-2"></a>
-</span><span id="__span-4-3"><a id="__codelineno-4-3" name="__codelineno-4-3" href="#__codelineno-4-3"></a><span class="kn">from</span><span class="w"> </span><span class="nn">fastapi_cache_di</span><span class="w"> </span><span class="kn">import</span> <span class="n">patch_fastapi_solve_dependencies</span>
-</span><span id="__span-4-4"><a id="__codelineno-4-4" name="__codelineno-4-4" href="#__codelineno-4-4"></a>
-</span><span id="__span-4-5"><a id="__codelineno-4-5" name="__codelineno-4-5" href="#__codelineno-4-5"></a><span class="n">patch_fastapi_solve_dependencies</span><span class="p">()</span>
-</span><span id="__span-4-6"><a id="__codelineno-4-6" name="__codelineno-4-6" href="#__codelineno-4-6"></a>
-</span><span id="__span-4-7"><a id="__codelineno-4-7" name="__codelineno-4-7" href="#__codelineno-4-7"></a><span class="n">app</span> <span class="o">=</span> <span class="n">FastAPI</span><span class="p">()</span>
+<div class="language-python highlight"><pre><span></span><code><span id="__span-5-1"><a id="__codelineno-5-1" name="__codelineno-5-1" href="#__codelineno-5-1"></a><span class="kn">from</span><span class="w"> </span><span class="nn">fastapi</span><span class="w"> </span><span class="kn">import</span> <span class="n">FastAPI</span>
+</span><span id="__span-5-2"><a id="__codelineno-5-2" name="__codelineno-5-2" href="#__codelineno-5-2"></a>
+</span><span id="__span-5-3"><a id="__codelineno-5-3" name="__codelineno-5-3" href="#__codelineno-5-3"></a><span class="kn">from</span><span class="w"> </span><span class="nn">fastapi_cache_di</span><span class="w"> </span><span class="kn">import</span> <span class="n">patch_fastapi_solve_dependencies</span>
+</span><span id="__span-5-4"><a id="__codelineno-5-4" name="__codelineno-5-4" href="#__codelineno-5-4"></a>
+</span><span id="__span-5-5"><a id="__codelineno-5-5" name="__codelineno-5-5" href="#__codelineno-5-5"></a><span class="n">patch_fastapi_solve_dependencies</span><span class="p">()</span>
+</span><span id="__span-5-6"><a id="__codelineno-5-6" name="__codelineno-5-6" href="#__codelineno-5-6"></a>
+</span><span id="__span-5-7"><a id="__codelineno-5-7" name="__codelineno-5-7" href="#__codelineno-5-7"></a><span class="n">app</span> <span class="o">=</span> <span class="n">FastAPI</span><span class="p">()</span>
 </span></code></pre></div>
-<p><code>unpatch_fastapi_solve_dependencies()</code> restores FastAPI's behavior. The two
-patches are independent: either can be used without the other.</p>
+<p><code>unpatch_fastapi_solve_dependencies()</code> restores FastAPI's behavior.</p>
 <p>The values injected into endpoints are unchanged. The only visible difference: a
 <code>use_cache=False</code> dependency nested under a cached dependency is no longer called
 again during the skipped walk, whose result was discarded anyway. It works the
