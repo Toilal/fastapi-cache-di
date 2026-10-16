@@ -4,7 +4,9 @@ from fastapi_cache_di.cache import DepsCache
 from fastapi_cache_di.patch import (
     fastapi_deps_cache,
     patch_fastapi_deps_cache,
+    patch_fastapi_solve_dependencies,
     unpatch_fastapi_deps_cache,
+    unpatch_fastapi_solve_dependencies,
 )
 
 __version__ = "0.2.1"
@@ -14,5 +16,7 @@ __all__ = [
     "__version__",
     "fastapi_deps_cache",
     "patch_fastapi_deps_cache",
+    "patch_fastapi_solve_dependencies",
     "unpatch_fastapi_deps_cache",
+    "unpatch_fastapi_solve_dependencies",
 ]

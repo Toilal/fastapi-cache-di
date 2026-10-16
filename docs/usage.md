@@ -1,12 +1,15 @@
 Usage
 =====
 
-`fastapi-cache-di` is a **startup-only** optimization. The cache must be active
+The dependency cache is a **startup-only** optimization. The cache must be active
 while FastAPI introspects your routes' dependency trees — that is, while routers
 are being included / routes registered — and torn down afterwards.
 
 There are three ways to drive it: the context manager, manual patch/unpatch, and
 a caller-owned shared cache you can inspect afterwards.
+
+Separately, an opt-in runtime patch cuts a per-request cost, see
+[Skipping the sub-tree of cached dependencies](#skipping-the-sub-tree-of-cached-dependencies).
 
 ## Context manager (recommended)
 
@@ -131,3 +134,35 @@ globals, a caller-owned cache still exposes its statistics after `unpatch`.
 Calling `patch_fastapi_deps_cache(deps_cache=...)` while a patch is already
 active keeps the **existing** cache and logs a warning — the new cache is ignored
 until you `unpatch` first.
+
+## Skipping the sub-tree of cached dependencies
+
+At **request time**, FastAPI solves the whole sub-tree of a dependency before
+checking whether its value is already in the request's cache. The cache saves the
+call, not the walk: a dependency shared across a deep tree (a DB handle, a
+session service, repositories …) has its sub-tree solved again at every
+occurrence, query, header and cookie parameters included, and the result is
+thrown away. The cost grows with the number of occurrences in the tree, not with
+the number of unique dependencies.
+
+`patch_fastapi_solve_dependencies()` stops that walk as soon as the value is
+cached; FastAPI then reuses the cached value as before. Unlike the dependency
+cache, it is meant to stay active for the app's lifetime:
+
+```python
+from fastapi import FastAPI
+
+from fastapi_cache_di import patch_fastapi_solve_dependencies
+
+patch_fastapi_solve_dependencies()
+
+app = FastAPI()
+```
+
+`unpatch_fastapi_solve_dependencies()` restores FastAPI's behavior. The two
+patches are independent: either can be used without the other.
+
+The values injected into endpoints are unchanged. The only visible difference: a
+`use_cache=False` dependency nested under a cached dependency is no longer called
+again during the skipped walk, whose result was discarded anyway. It works the
+same with `dependency_overrides` set, as in most test suites.

@@ -8,7 +8,9 @@ from fastapi_cache_di import (
     DepsCache,
     fastapi_deps_cache,
     patch_fastapi_deps_cache,
+    patch_fastapi_solve_dependencies,
     unpatch_fastapi_deps_cache,
+    unpatch_fastapi_solve_dependencies,
 )
 ```
 
@@ -61,6 +63,33 @@ unpatch_fastapi_deps_cache() -> bool
 Restore the original FastAPI functions and free cache memory. Logs a hit/miss
 summary of the patched functions at `INFO` level. An internally-created cache is cleared; a caller-owned
 cache is left populated (entries and counters) for post-hoc inspection.
+
+**Returns** `True` if unpatched, `False` if not currently patched.
+
+## `patch_fastapi_solve_dependencies`
+
+```python
+patch_fastapi_solve_dependencies() -> bool
+```
+
+Skip re-walking the sub-tree of dependencies already solved for a request.
+Replaces `solve_dependencies` in `fastapi.dependencies.utils` and
+`fastapi.routing`; meant to stay active for the app's lifetime, independently of
+the dependency cache.
+
+**Returns** `True` on the first call, `False` if already patched.
+
+**Raises** `RuntimeError` on a FastAPI version that no longer defines
+`solve_dependencies` in either module, rather than silently losing the
+optimization.
+
+## `unpatch_fastapi_solve_dependencies`
+
+```python
+unpatch_fastapi_solve_dependencies() -> bool
+```
+
+Restore FastAPI's `solve_dependencies` in both modules.
 
 **Returns** `True` if unpatched, `False` if not currently patched.
 
