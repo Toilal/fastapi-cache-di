@@ -1,0 +1,628 @@
+"""Cached sub-dependencies are not walked again at request time."""
+
+import dataclasses
+import inspect
+from collections.abc import AsyncIterator, Callable, Iterator
+from pathlib import Path
+from typing import Annotated, Any
+
+import fastapi.dependencies.utils as _dep_utils
+import fastapi.routing as _routing
+import pytest
+from fastapi import (
+    APIRouter,
+    BackgroundTasks,
+    Depends,
+    FastAPI,
+    Response,
+    Security,
+    WebSocket,
+)
+from fastapi.dependencies.models import Dependant
+from fastapi.routing import APIRoute
+from fastapi.security import SecurityScopes
+from fastapi.testclient import TestClient
+
+from fastapi_cache_di import (
+    fastapi_deps_cache,
+    patch_fastapi_deps_cache,
+    patch_fastapi_solve_dependencies,
+    unpatch_fastapi_deps_cache,
+    unpatch_fastapi_solve_dependencies,
+)
+from fastapi_cache_di import patch as patch_module
+
+_FASTAPI_SOLVE_DEPENDENCIES = _dep_utils.solve_dependencies
+
+requires_dependency_scope = pytest.mark.skipif(
+    "scope" not in inspect.signature(Depends).parameters,
+    reason="Depends(scope=...) arrived in FastAPI 0.121",
+)
+
+
+@pytest.fixture(autouse=True)
+def _ensure_unpatched() -> Iterator[None]:
+    unpatch_fastapi_solve_dependencies()
+    unpatch_fastapi_deps_cache()
+    yield
+    unpatch_fastapi_solve_dependencies()
+    unpatch_fastapi_deps_cache()
+
+
+@pytest.fixture
+def walks() -> Iterator[list[Callable[..., Any]]]:
+    """The call of every dependant FastAPI's own ``solve_dependencies`` walks.
+
+    The spy is installed in both modules before patching, so the patch captures
+    it as the original it delegates to.
+    """
+    calls: list[Callable[..., Any]] = []
+
+    async def spy(**kwargs: Any) -> Any:
+        calls.append(kwargs["dependant"].call)
+        return await _FASTAPI_SOLVE_DEPENDENCIES(**kwargs)
+
+    _dep_utils.solve_dependencies = spy
+    _routing.solve_dependencies = spy
+    try:
+        yield calls
+    finally:
+        unpatch_fastapi_solve_dependencies()
+        _dep_utils.solve_dependencies = _FASTAPI_SOLVE_DEPENDENCIES
+        _routing.solve_dependencies = _FASTAPI_SOLVE_DEPENDENCIES
+
+
+def _responses(build: Callable[[], FastAPI], *paths: str) -> list[Any]:
+    """Status, body and headers of each GET, on a freshly built app."""
+    with TestClient(build()) as client:
+        responses = [client.get(path) for path in paths]
+    return [(r.status_code, r.json(), dict(r.headers)) for r in responses]
+
+
+def _same_with_and_without_patch(build: Callable[[], FastAPI], *paths: str) -> None:
+    unpatched = _responses(build, *paths)
+    patch_fastapi_solve_dependencies()
+    assert _responses(build, *paths) == unpatched
+
+
+# ---------------------------------------------------------------------------
+# A dependency shared at several depths
+# ---------------------------------------------------------------------------
+
+
+def _shared_tree(built: list[str]) -> FastAPI:
+    def db() -> str:
+        built.append("db")
+        return "db"
+
+    def repo(dal: Annotated[str, Depends(db)]) -> str:
+        return f"repo({dal})"
+
+    def service(
+        repository: Annotated[str, Depends(repo)], dal: Annotated[str, Depends(db)]
+    ) -> str:
+        return f"service({repository}, {dal})"
+
+    app = FastAPI()
+
+    @app.get("/")
+    async def endpoint(
+        svc: Annotated[str, Depends(service)],
+        repository: Annotated[str, Depends(repo)],
+        dal: Annotated[str, Depends(db)],
+    ) -> list[str]:
+        return [svc, repository, dal]
+
+    return app
+
+
+# ---------------------------------------------------------------------------
+# Patch / unpatch
+# ---------------------------------------------------------------------------
+
+
+class TestPatchUnpatch:
+    def test_patch_then_unpatch_report_whether_they_acted(self) -> None:
+        assert patch_fastapi_solve_dependencies() is True
+        assert patch_fastapi_solve_dependencies() is False
+        assert unpatch_fastapi_solve_dependencies() is True
+        assert unpatch_fastapi_solve_dependencies() is False
+
+    def test_patch_replaces_both_patch_points(self) -> None:
+        patch_fastapi_solve_dependencies()
+
+        assert _dep_utils.solve_dependencies is not _FASTAPI_SOLVE_DEPENDENCIES
+        assert _routing.solve_dependencies is _dep_utils.solve_dependencies
+
+    def test_unpatch_restores_the_original_of_each_module(self) -> None:
+        async def other(**kwargs: Any) -> Any:
+            return await _FASTAPI_SOLVE_DEPENDENCIES(**kwargs)
+
+        _routing.solve_dependencies = other
+        try:
+            patch_fastapi_solve_dependencies()
+            unpatch_fastapi_solve_dependencies()
+
+            assert _dep_utils.solve_dependencies is _FASTAPI_SOLVE_DEPENDENCIES
+            assert _routing.solve_dependencies is other
+        finally:
+            _routing.solve_dependencies = _FASTAPI_SOLVE_DEPENDENCIES
+
+    @pytest.mark.parametrize("module", [_dep_utils, _routing])
+    def test_patch_fails_loudly_when_fastapi_drops_a_patch_point(
+        self, module: Any, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        monkeypatch.delattr(module, "solve_dependencies")
+
+        with pytest.raises(RuntimeError, match="not supported"):
+            patch_fastapi_solve_dependencies()
+
+        assert patch_module._original_solve_dependencies is None
+        for patch_point in (_dep_utils, _routing):
+            assert (
+                getattr(patch_point, "solve_dependencies", _FASTAPI_SOLVE_DEPENDENCIES)
+                is _FASTAPI_SOLVE_DEPENDENCIES
+            )
+
+    def test_independent_of_the_deps_cache_pair(self) -> None:
+        patch_fastapi_solve_dependencies()
+        patched = _dep_utils.solve_dependencies
+
+        assert patch_fastapi_deps_cache() is True
+        assert unpatch_fastapi_deps_cache() is True
+        assert _dep_utils.solve_dependencies is patched
+
+        assert unpatch_fastapi_solve_dependencies() is True
+        assert patch_fastapi_deps_cache() is True
+        assert patch_fastapi_solve_dependencies() is True
+        assert unpatch_fastapi_solve_dependencies() is True
+        assert unpatch_fastapi_deps_cache() is True
+
+    def test_independent_of_the_deps_cache_context_manager(self) -> None:
+        patch_fastapi_solve_dependencies()
+        patched = _dep_utils.solve_dependencies
+
+        with fastapi_deps_cache():
+            assert _dep_utils.solve_dependencies is patched
+        assert _dep_utils.solve_dependencies is patched
+
+
+# ---------------------------------------------------------------------------
+# Fewer walks, each dependency called once
+# ---------------------------------------------------------------------------
+
+
+class TestWalks:
+    def test_shared_dependency_is_walked_and_called_once_per_request(
+        self, walks: list[Callable[..., Any]]
+    ) -> None:
+        built: list[str] = []
+        app = _shared_tree(built)
+
+        _responses(lambda: app, "/")
+        unpatched_walks = len(walks)
+        walks.clear()
+
+        patch_fastapi_solve_dependencies()
+        _responses(lambda: app, "/")
+
+        names = [getattr(call, "__name__", None) for call in walks]
+        assert names == ["endpoint", "service", "repo", "db"]
+        assert len(walks) < unpatched_walks
+        assert built == ["db", "db"]
+
+    def test_use_cache_false_is_still_called_at_every_occurrence(self) -> None:
+        built: list[object] = []
+
+        def fresh() -> object:
+            built.append(object())
+            return built[-1]
+
+        def holder(value: Annotated[object, Depends(fresh, use_cache=False)]) -> int:
+            return id(value)
+
+        app = FastAPI()
+
+        @app.get("/")
+        async def endpoint(
+            held: Annotated[int, Depends(holder)],
+            value: Annotated[object, Depends(fresh, use_cache=False)],
+        ) -> bool:
+            return held != id(value)
+
+        patch_fastapi_solve_dependencies()
+
+        assert _responses(lambda: app, "/")[0][1] is True
+        assert len(built) == 2
+
+    def test_use_cache_false_under_a_cached_dependency_is_not_called_again(
+        self,
+    ) -> None:
+        built: list[str] = []
+
+        def fresh() -> str:
+            built.append("fresh")
+            return "fresh"
+
+        def cached(value: Annotated[str, Depends(fresh, use_cache=False)]) -> str:
+            return value
+
+        def build() -> FastAPI:
+            app = FastAPI()
+
+            @app.get("/")
+            async def endpoint(
+                first: Annotated[str, Depends(cached)],
+                second: Annotated[str, Depends(cached)],
+            ) -> list[str]:
+                return [first, second]
+
+            return app
+
+        _responses(build, "/")
+        assert len(built) == 2
+
+        built.clear()
+        patch_fastapi_solve_dependencies()
+        _responses(build, "/")
+        assert len(built) == 1
+
+
+# ---------------------------------------------------------------------------
+# Same values and errors as without the patch
+# ---------------------------------------------------------------------------
+
+
+class TestSameResults:
+    @requires_dependency_scope
+    def test_generator_dependencies_of_both_scopes(self) -> None:
+        events: list[str] = []
+
+        def build() -> FastAPI:
+            async def resource() -> AsyncIterator[str]:
+                events.append("enter resource")
+                yield "resource"
+                events.append("exit resource")
+
+            def session() -> Iterator[str]:
+                events.append("enter session")
+                yield "session"
+                events.append("exit session")
+
+            def user(
+                res: Annotated[str, Depends(resource, scope="function")],
+                sess: Annotated[str, Depends(session, scope="request")],
+            ) -> str:
+                return f"{res}+{sess}"
+
+            app = FastAPI()
+
+            @app.get("/")
+            async def endpoint(
+                first: Annotated[str, Depends(user)],
+                res: Annotated[str, Depends(resource, scope="function")],
+                sess: Annotated[str, Depends(session, scope="request")],
+            ) -> list[str]:
+                return [first, res, sess]
+
+            return app
+
+        unpatched = _responses(build, "/")
+        unpatched_events = events.copy()
+        events.clear()
+
+        patch_fastapi_solve_dependencies()
+
+        assert _responses(build, "/") == unpatched
+        assert events == unpatched_events
+
+    def test_generator_dependencies(self) -> None:
+        events: list[str] = []
+
+        def build() -> FastAPI:
+            def session() -> Iterator[str]:
+                events.append("enter")
+                yield "session"
+                events.append("exit")
+
+            def repo(sess: Annotated[str, Depends(session)]) -> str:
+                return sess
+
+            app = FastAPI()
+
+            @app.get("/")
+            async def endpoint(
+                repository: Annotated[str, Depends(repo)],
+                sess: Annotated[str, Depends(session)],
+            ) -> list[str]:
+                return [repository, sess]
+
+            return app
+
+        unpatched = _responses(build, "/")
+        assert events == ["enter", "exit"]
+        events.clear()
+
+        patch_fastapi_solve_dependencies()
+
+        assert _responses(build, "/") == unpatched
+        assert events == ["enter", "exit"]
+
+    def test_security_scopes(self) -> None:
+        def build() -> FastAPI:
+            def scopes(security_scopes: SecurityScopes) -> list[str]:
+                return sorted(security_scopes.scopes)
+
+            def plain() -> str:
+                return "plain"
+
+            def reader(
+                granted: Annotated[list[str], Security(scopes, scopes=["read"])],
+                value: Annotated[str, Depends(plain)],
+            ) -> list[str]:
+                return [*granted, value]
+
+            app = FastAPI()
+
+            @app.get("/")
+            async def endpoint(
+                read: Annotated[list[str], Depends(reader)],
+                write: Annotated[list[str], Security(scopes, scopes=["write"])],
+                none: Annotated[list[str], Depends(scopes)],
+                admin: Annotated[list[str], Security(plain, scopes=["admin"])],
+                value: Annotated[str, Depends(plain)],
+            ) -> list[Any]:
+                return [read, write, none, admin, value]
+
+            return app
+
+        _same_with_and_without_patch(build, "/")
+
+    def test_background_tasks_and_response_under_a_shared_dependency(self) -> None:
+        ran: list[str] = []
+
+        def build() -> FastAPI:
+            def tagged(response: Response, tasks: BackgroundTasks) -> str:
+                response.headers["x-tagged"] = "yes"
+                tasks.add_task(ran.append, "task")
+                return "tagged"
+
+            def wrapper(value: Annotated[str, Depends(tagged)]) -> str:
+                return value
+
+            app = FastAPI()
+
+            @app.get("/")
+            async def endpoint(
+                wrapped: Annotated[str, Depends(wrapper)],
+                value: Annotated[str, Depends(tagged)],
+                tasks: BackgroundTasks,
+            ) -> list[str]:
+                tasks.add_task(ran.append, "endpoint task")
+                return [wrapped, value]
+
+            return app
+
+        unpatched = _responses(build, "/")
+        assert unpatched[0][2]["x-tagged"] == "yes"
+        unpatched_ran = ran.copy()
+        ran.clear()
+
+        patch_fastapi_solve_dependencies()
+
+        assert _responses(build, "/") == unpatched
+        assert ran == unpatched_ran == ["task", "endpoint task"]
+
+    def test_validation_error_in_a_shared_sub_dependency(self) -> None:
+        def build() -> FastAPI:
+            def page(size: int) -> int:
+                return size
+
+            def listing(value: Annotated[int, Depends(page)]) -> int:
+                return value
+
+            app = FastAPI()
+
+            @app.get("/")
+            async def endpoint(
+                first: Annotated[int, Depends(listing)],
+                second: Annotated[int, Depends(page)],
+            ) -> list[int]:
+                return [first, second]
+
+            return app
+
+        _same_with_and_without_patch(build, "/?size=3", "/?size=oops", "/")
+
+    def test_dependency_overrides(self) -> None:
+        def build() -> FastAPI:
+            def query(x: int = 1) -> int:
+                return x
+
+            def needs_param(value: Annotated[int, Depends(query)]) -> int:
+                return value
+
+            def direct() -> str:
+                return "direct"
+
+            def overridden() -> str:
+                return "overridden"
+
+            app = FastAPI()
+
+            @app.get("/both")
+            async def both(
+                over: Annotated[str, Depends(overridden)],
+                plain: Annotated[str, Depends(direct)],
+            ) -> list[str]:
+                return [over, plain]
+
+            @app.get("/no-cache")
+            async def no_cache(
+                cached: Annotated[int, Depends(needs_param)],
+                fresh: Annotated[int, Depends(needs_param, use_cache=False)],
+            ) -> list[int]:
+                return [cached, fresh]
+
+            @app.get("/scopes")
+            async def scopes(
+                plain: Annotated[int, Depends(needs_param)],
+                scoped: Annotated[int, Security(needs_param, scopes=["s"])],
+            ) -> list[int]:
+                return [plain, scoped]
+
+            app.dependency_overrides[overridden] = direct
+            return app
+
+        _same_with_and_without_patch(build, "/both", "/no-cache?x=5", "/scopes?x=5")
+
+    def test_websocket_routes(self) -> None:
+        built: list[str] = []
+
+        def build() -> FastAPI:
+            def db() -> str:
+                built.append("db")
+                return "db"
+
+            def repo(dal: Annotated[str, Depends(db)]) -> str:
+                return f"repo({dal})"
+
+            app = FastAPI()
+
+            @app.websocket("/ws")
+            async def ws(
+                websocket: WebSocket,
+                repository: Annotated[str, Depends(repo)],
+                dal: Annotated[str, Depends(db)],
+            ) -> None:
+                await websocket.accept()
+                await websocket.send_json([repository, dal])
+                await websocket.close()
+
+            return app
+
+        def receive() -> Any:
+            with (
+                TestClient(build()) as client,
+                client.websocket_connect("/ws") as websocket,
+            ):
+                return websocket.receive_json()
+
+        unpatched = receive()
+        patch_fastapi_solve_dependencies()
+
+        assert receive() == unpatched
+        assert built == ["db", "db"]
+
+    @pytest.mark.skipif(
+        not hasattr(APIRouter, "frontend"),
+        reason="route groups (APIRouter.frontend) are not in this FastAPI",
+    )
+    def test_route_group_dependencies(self, tmp_path: Path) -> None:
+        (tmp_path / "index.html").write_text("<html></html>")
+        built: list[str] = []
+
+        def build() -> FastAPI:
+            def db() -> str:
+                built.append("db")
+                return "db"
+
+            def repo(dal: Annotated[str, Depends(db)]) -> str:
+                return dal
+
+            router = APIRouter(dependencies=[Depends(repo), Depends(db)])
+            router.frontend("/", directory=tmp_path)
+            app = FastAPI()
+            app.include_router(router)
+            return app
+
+        with TestClient(build()) as client:
+            assert client.get("/").status_code == 200
+
+        patch_fastapi_solve_dependencies()
+
+        with TestClient(build()) as client:
+            assert client.get("/").status_code == 200
+        assert built == ["db", "db"]
+
+
+# ---------------------------------------------------------------------------
+# Guards against FastAPI internals changing
+# ---------------------------------------------------------------------------
+
+
+def _sub_dependants(dependant: Dependant) -> Iterator[Dependant]:
+    for sub in dependant.dependencies:
+        yield sub
+        yield from _sub_dependants(sub)
+
+
+class TestGuards:
+    def test_recursion_resolves_the_module_global_per_call(
+        self, walks: list[Callable[..., Any]]
+    ) -> None:
+        # Fails if FastAPI stops resolving ``solve_dependencies`` through the
+        # module globals: the patch would then silently become a no-op.
+        _responses(lambda: _shared_tree([]), "/")
+
+        names = {getattr(call, "__name__", None) for call in walks}
+        assert names == {"endpoint", "service", "repo", "db"}
+
+    def test_solved_dependency_fields(self) -> None:
+        fields = {
+            field.name for field in dataclasses.fields(_dep_utils.SolvedDependency)
+        }
+
+        assert fields == {
+            "values",
+            "errors",
+            "background_tasks",
+            "response",
+            "dependency_cache",
+        }
+
+    def test_cache_key_is_the_one_fastapi_stores_values_under(self) -> None:
+        # Fails if FastAPI changes how it keys ``dependency_cache``: the patch
+        # would then never find a cached value, or find the wrong one.
+        caches: list[dict[Any, Any]] = []
+
+        async def capture(**kwargs: Any) -> Any:
+            solved = await _FASTAPI_SOLVE_DEPENDENCIES(**kwargs)
+            caches.append(solved.dependency_cache)
+            return solved
+
+        def scopes(security_scopes: SecurityScopes) -> list[str]:
+            return security_scopes.scopes
+
+        def plain() -> str:
+            return "plain"
+
+        def reader(
+            granted: Annotated[list[str], Security(scopes, scopes=["read"])],
+            value: Annotated[str, Depends(plain)],
+        ) -> str:
+            return value
+
+        app = FastAPI()
+
+        @app.get("/")
+        async def endpoint(
+            read: Annotated[str, Depends(reader)],
+            admin: Annotated[str, Security(plain, scopes=["admin"])],
+            none: Annotated[list[str], Depends(scopes)],
+        ) -> None:
+            pass
+
+        _routing.solve_dependencies = capture
+        try:
+            _responses(lambda: app, "/")
+        finally:
+            _routing.solve_dependencies = _FASTAPI_SOLVE_DEPENDENCIES
+
+        (route,) = (r for r in app.routes if isinstance(r, APIRoute))
+        (cache,) = caches
+        keys = {
+            patch_module._request_cache_key(sub, {})
+            for sub in _sub_dependants(route.dependant)
+        }
+        assert keys == set(cache)

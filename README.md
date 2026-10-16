@@ -47,6 +47,27 @@ with fastapi_deps_cache():
 Manual patch/unpatch, sharing and inspecting the cache, and the cache-key details
 are covered in the documentation.
 
+## Skipping the sub-tree of cached dependencies
+
+At **request time**, FastAPI solves the whole sub-tree of a dependency before
+checking whether its value is already in the request's cache, so a dependency
+shared across a deep tree is solved again at every occurrence.
+`patch_fastapi_solve_dependencies()` stops that walk as soon as the value is
+cached. It is opt-in and stays active for the app's lifetime:
+
+```python
+from fastapi import FastAPI
+
+from fastapi_cache_di import patch_fastapi_solve_dependencies
+
+patch_fastapi_solve_dependencies()
+
+app = FastAPI()
+```
+
+The values injected into endpoints are unchanged; see the documentation for the
+details.
+
 ## Documentation
 
 Full documentation is available at

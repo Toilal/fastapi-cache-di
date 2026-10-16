@@ -33,16 +33,27 @@ and free memory — or use the :func:`fastapi_deps_cache` context manager.
    :class:`~fastapi_cache_di.cache.DepsCache` instead (so a caller-owned cache
    keeps them after unpatch); re-entrancy of the context manager is handled by
    :func:`patch_fastapi_deps_cache` returning ``False`` when already active.
+
+Separately, :func:`patch_fastapi_solve_dependencies` cuts a **per-request**
+cost: ``solve_dependencies`` walks the whole sub-tree of every sub-dependency
+before checking whether its value is already in the request's
+``dependency_cache``, so a dependency shared across a deep tree is re-solved at
+every occurrence. The patch returns early for a sub-dependency whose value is
+already cached; the caller then reuses that value through its own cache check.
+Unlike the deps cache, it is meant to stay active for the app's lifetime, and it
+is independent of it: either pair can be used without the other.
 """
 
 import copy
 import inspect
 import logging
-from collections.abc import Callable, Iterator
+from collections.abc import Awaitable, Callable, Iterator
 from contextlib import contextmanager
 from types import ModuleType
 from typing import Any
 
+import fastapi
+import fastapi.dependencies.models as _dep_models
 import fastapi.dependencies.utils as _dep_utils
 import fastapi.openapi.utils as _openapi_utils
 import fastapi.routing as _routing
@@ -448,3 +459,108 @@ def fastapi_deps_cache(
     finally:
         if patched:
             unpatch_fastapi_deps_cache()
+
+
+# ---------------------------------------------------------------------------
+# solve_dependencies: skip re-walking the sub-tree of cached dependencies
+# ---------------------------------------------------------------------------
+
+_original_solve_dependencies: Callable[..., Awaitable[Any]] | None = None
+_original_routing_solve_dependencies: Callable[..., Awaitable[Any]] | None = None
+
+# The key FastAPI stores a solved value under: a function from FastAPI 0.140,
+# ``Dependant.cache_key`` before (a dataclass field, then a ``cached_property``).
+_get_cache_key: Callable[..., Any] | None = getattr(_dep_models, "_get_cache_key", None)
+
+
+def _request_cache_key(dependant: Dependant, uses_scopes_cache: Any) -> Any:
+    if _get_cache_key is not None:
+        return _get_cache_key(dependant=dependant, uses_scopes_cache=uses_scopes_cache)
+    return dependant.cache_key
+
+
+async def _solve_dependencies_skipping_cached(**kwargs: Any) -> Any:
+    dependant: Dependant = kwargs["dependant"]
+    cache = kwargs.get("dependency_cache")
+    provider = kwargs.get("dependency_overrides_provider")
+    # With overrides set, FastAPI rebuilds every sub-dependant, overridden or
+    # not: the rebuilt one always has ``use_cache=True`` and drops its own
+    # ``Security`` scopes, so its key may differ from the one the caller checks,
+    # and an early return would feed the caller empty values.
+    if (
+        cache
+        and dependant.use_cache
+        and not getattr(provider, "dependency_overrides", None)
+        and _request_cache_key(dependant, kwargs.get("_uses_scopes_cache")) in cache
+    ):
+        return _dep_utils.SolvedDependency(
+            values={},
+            errors=[],
+            background_tasks=kwargs.get("background_tasks"),
+            response=kwargs["response"],
+            dependency_cache=cache,
+        )
+    # A request already past the global lookup when unpatch runs still lands
+    # here; the global then holds FastAPI's function again.
+    original = _original_solve_dependencies or _dep_utils.solve_dependencies
+    return await original(**kwargs)
+
+
+def patch_fastapi_solve_dependencies() -> bool:
+    """Skip re-walking the sub-tree of dependencies already solved for a request.
+
+    Replaces ``solve_dependencies`` in ``fastapi.dependencies.utils``, whose
+    recursion looks this module global up at every call, and in
+    ``fastapi.routing``, which imports it by name for HTTP routes, WebSocket
+    routes and route groups. A sub-dependency whose value is already in the
+    request's ``dependency_cache`` is no longer solved again: FastAPI reuses the
+    cached value, as it already did after the walk. The values injected into
+    endpoints are unchanged; a ``use_cache=False`` dependency nested under a
+    cached one is no longer called during that discarded walk. While
+    ``dependency_overrides`` is not empty, requests are solved as without the
+    patch.
+
+    Returns ``True`` on the first call, ``False`` if already patched. Raises
+    :class:`RuntimeError` on a FastAPI that no longer exposes either function,
+    rather than silently losing the optimization.
+    """
+    global _original_solve_dependencies, _original_routing_solve_dependencies
+
+    missing = [
+        module.__name__
+        for module in (_dep_utils, _routing)
+        if not hasattr(module, "solve_dependencies")
+    ]
+    if missing:
+        raise RuntimeError(
+            f"patch_fastapi_solve_dependencies: FastAPI {fastapi.__version__} no "
+            f"longer defines solve_dependencies in {', '.join(missing)}; this "
+            "version is not supported. Remove the patch or pin a supported "
+            "FastAPI version."
+        )
+
+    if _original_solve_dependencies is not None:
+        return False
+
+    _original_solve_dependencies = _dep_utils.solve_dependencies
+    _original_routing_solve_dependencies = _routing.solve_dependencies  # type: ignore[attr-defined]
+    _dep_utils.solve_dependencies = _solve_dependencies_skipping_cached
+    _routing.solve_dependencies = _solve_dependencies_skipping_cached  # type: ignore[attr-defined]
+    return True
+
+
+def unpatch_fastapi_solve_dependencies() -> bool:
+    """Restore FastAPI's ``solve_dependencies`` in both modules.
+
+    Returns ``True`` if unpatched, ``False`` if not currently patched.
+    """
+    global _original_solve_dependencies, _original_routing_solve_dependencies
+
+    if _original_solve_dependencies is None:
+        return False
+
+    _dep_utils.solve_dependencies = _original_solve_dependencies  # type: ignore[assignment]
+    _routing.solve_dependencies = _original_routing_solve_dependencies  # type: ignore[attr-defined,assignment]
+    _original_solve_dependencies = None
+    _original_routing_solve_dependencies = None
+    return True
