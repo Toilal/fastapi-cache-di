@@ -101,9 +101,9 @@ entry. `DepsCache` holds a strong reference to every keyed object (via
 `solve_dependencies` loops over a dependant's sub-dependencies, recurses into each
 one, and only then checks whether the sub-dependency's value is already in the
 request's `dependency_cache`. `patch_fastapi_solve_dependencies()` wraps it: when
-the call receives a non-empty cache that already holds the dependant's value, it
-returns an empty `SolvedDependency` straight away. The caller then hits its own
-cache check and reuses the value, so no FastAPI code is copied.
+the caller's sub-dependency is cached, the recursive call returns an empty
+`SolvedDependency` straight away. The caller then hits its own cache check and
+reuses the value, so no FastAPI code is copied.
 
 - **Patch points** — `fastapi.dependencies.utils.solve_dependencies` (the
   recursion looks this module global up at every call) and
@@ -114,10 +114,16 @@ cache check and reuses the value, so no FastAPI code is copied.
   dataclass field before FastAPI 0.121, `Dependant.cache_key` as a
   `cached_property` up to 0.139, and `fastapi.dependencies.models._get_cache_key` from 0.140,
   called with the `_uses_scopes_cache` memo the recursion threads through.
-- **Overrides** — when `dependency_overrides` is not empty, FastAPI rebuilds every
-  sub-dependant, overridden or not, before recursing. The rebuilt dependant always
-  has `use_cache=True` and drops its own `Security` scopes, so its key may not be
-  the one the caller checks; such requests are solved unchanged.
+- **The caller's sub-dependency** — when `dependency_overrides` is not empty,
+  FastAPI rebuilds every sub-dependant, overridden or not, before recursing. The
+  rebuilt dependant always has `use_cache=True` and drops its own `Security`
+  scopes, so its key may not be the one the caller checks. The wrapper therefore
+  tests the caller's own sub-dependant: before delegating, it publishes the
+  dependant's sub-dependants in a `ContextVar`, and each recursive call takes the
+  next one, since FastAPI recurses exactly once per sub-dependant, in order. A
+  sub-dependant whose `name` or (overridden) `call` does not match what the
+  recursive call received is never skipped. The `ContextVar` is per asyncio
+  task, so concurrent requests never share it.
 - **Guards** — tests fail if FastAPI stops resolving the recursion through the
-  module global, changes the fields of `SolvedDependency`, or keys its request
-  cache differently.
+  module global, changes the fields of `SolvedDependency`, keys its request cache
+  differently, or stops recursing once per sub-dependant in order.

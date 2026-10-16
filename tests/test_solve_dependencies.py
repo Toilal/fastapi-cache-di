@@ -1,5 +1,6 @@
 """Cached sub-dependencies are not walked again at request time."""
 
+import asyncio
 import dataclasses
 import inspect
 from collections.abc import AsyncIterator, Callable, Iterator
@@ -19,6 +20,7 @@ from fastapi import (
     WebSocket,
 )
 from fastapi.dependencies.models import Dependant
+from fastapi.dependencies.utils import get_dependant
 from fastapi.routing import APIRoute
 from fastapi.security import SecurityScopes
 from fastapi.testclient import TestClient
@@ -88,6 +90,10 @@ def _same_with_and_without_patch(build: Callable[[], FastAPI], *paths: str) -> N
 # ---------------------------------------------------------------------------
 # A dependency shared at several depths
 # ---------------------------------------------------------------------------
+
+
+def _unrelated() -> str:
+    return "real"
 
 
 def _shared_tree(built: list[str]) -> FastAPI:
@@ -210,6 +216,64 @@ class TestWalks:
         assert names == ["endpoint", "service", "repo", "db"]
         assert len(walks) < unpatched_walks
         assert built == ["db", "db"]
+
+    def test_overrides_do_not_disable_the_skip(
+        self, walks: list[Callable[..., Any]]
+    ) -> None:
+        built: list[str] = []
+        app = _shared_tree(built)
+        app.dependency_overrides[_unrelated] = lambda: "fake"
+
+        unpatched = _responses(lambda: app, "/")
+        unpatched_walks = len(walks)
+        walks.clear()
+        built.clear()
+
+        patch_fastapi_solve_dependencies()
+
+        assert _responses(lambda: app, "/") == unpatched
+        names = [getattr(call, "__name__", None) for call in walks]
+        assert names == ["endpoint", "service", "repo", "db"]
+        assert len(walks) < unpatched_walks
+        assert built == ["db"]
+
+    def test_overridden_shared_dependency_is_walked_and_called_once(
+        self, walks: list[Callable[..., Any]]
+    ) -> None:
+        built: list[str] = []
+
+        def db() -> str:
+            built.append("db")
+            return "db"
+
+        def fake_db() -> str:
+            built.append("fake")
+            return "fake"
+
+        def repo(dal: Annotated[str, Depends(db)]) -> str:
+            return f"repo({dal})"
+
+        app = FastAPI()
+
+        @app.get("/")
+        async def endpoint(
+            repository: Annotated[str, Depends(repo)],
+            dal: Annotated[str, Depends(db)],
+        ) -> list[str]:
+            return [repository, dal]
+
+        app.dependency_overrides[db] = fake_db
+
+        unpatched = _responses(lambda: app, "/")
+        unpatched_walks = len(walks)
+        walks.clear()
+        built.clear()
+
+        patch_fastapi_solve_dependencies()
+
+        assert _responses(lambda: app, "/") == unpatched
+        assert len(walks) < unpatched_walks
+        assert built == ["fake"]
 
     def test_use_cache_false_is_still_called_at_every_occurrence(self) -> None:
         built: list[object] = []
@@ -471,10 +535,30 @@ class TestSameResults:
             ) -> list[int]:
                 return [plain, scoped]
 
+            def page(size: int) -> int:
+                return size
+
+            def listing(value: Annotated[int, Depends(page)]) -> int:
+                return value
+
+            @app.get("/page")
+            async def paged(
+                first: Annotated[int, Depends(listing)],
+                second: Annotated[int, Depends(page)],
+            ) -> list[int]:
+                return [first, second]
+
             app.dependency_overrides[overridden] = direct
             return app
 
-        _same_with_and_without_patch(build, "/both", "/no-cache?x=5", "/scopes?x=5")
+        _same_with_and_without_patch(
+            build,
+            "/both",
+            "/no-cache?x=5",
+            "/scopes?x=5",
+            "/page?size=3",
+            "/page?size=oops",
+        )
 
     def test_websocket_routes(self) -> None:
         built: list[str] = []
@@ -626,3 +710,153 @@ class TestGuards:
             for sub in _sub_dependants(route.dependant)
         }
         assert keys == set(cache)
+
+    def test_recursion_solves_each_sub_dependant_once_and_in_order(self) -> None:
+        # Fails if FastAPI stops calling ``solve_dependencies`` exactly once per
+        # sub-dependant, in the order of ``dependant.dependencies``: the patch
+        # would then match a recursive call with the wrong original.
+        mismatches: list[str] = []
+        pending: list[Iterator[Dependant]] = []
+        checked: list[str] = []
+
+        async def check(**kwargs: Any) -> Any:
+            received: Dependant = kwargs["dependant"]
+            if kwargs.get("dependency_cache") is not None:
+                overrides = kwargs["dependency_overrides_provider"].dependency_overrides
+                expected = next(pending[-1], None)
+                if (
+                    expected is None
+                    or expected.name != received.name
+                    or overrides.get(expected.call, expected.call) is not received.call
+                ):
+                    mismatches.append(f"unexpected {received.name}")
+                checked.append(str(received.name))
+            pending.append(iter(received.dependencies))
+            try:
+                return await _FASTAPI_SOLVE_DEPENDENCIES(**kwargs)
+            finally:
+                leftover = next(pending.pop(), None)
+                if leftover is not None:
+                    mismatches.append(f"{leftover.name} never solved")
+
+        def page(size: int) -> int:
+            return size
+
+        def scopes(security_scopes: SecurityScopes) -> list[str]:
+            return security_scopes.scopes
+
+        def listing(
+            value: Annotated[int, Depends(page)],
+            granted: Annotated[list[str], Security(scopes, scopes=["read"])],
+        ) -> int:
+            return value
+
+        app = FastAPI()
+
+        @app.get("/")
+        async def endpoint(
+            first: Annotated[int, Depends(listing)],
+            fresh: Annotated[int, Depends(page, use_cache=False)],
+            fake: Annotated[str, Depends(_unrelated)],
+        ) -> None:
+            pass
+
+        app.dependency_overrides[_unrelated] = lambda: "fake"
+
+        _dep_utils.solve_dependencies = check
+        _routing.solve_dependencies = check
+        try:
+            _responses(lambda: app, "/?size=3", "/?size=oops")
+        finally:
+            _dep_utils.solve_dependencies = _FASTAPI_SOLVE_DEPENDENCIES
+            _routing.solve_dependencies = _FASTAPI_SOLVE_DEPENDENCIES
+
+        assert mismatches == []
+        assert checked == ["first", "value", "granted", "fresh", "fake"] * 2
+
+
+# ---------------------------------------------------------------------------
+# Matching a recursive call with the caller's sub-dependant
+# ---------------------------------------------------------------------------
+
+
+def _leaf() -> str:
+    return "leaf"
+
+
+def _other_leaf() -> str:
+    return "other"
+
+
+def _parent(
+    leaf: Annotated[str, Depends(_leaf)], other: Annotated[str, Depends(_other_leaf)]
+) -> str:
+    return leaf + other
+
+
+def _sub_dependants_of_parent() -> list[Dependant]:
+    return get_dependant(path="/", call=_parent).dependencies
+
+
+class TestCallerSubDependant:
+    def test_no_pending_sub_dependants(self) -> None:
+        (leaf, _) = _sub_dependants_of_parent()
+
+        assert patch_module._caller_sub_dependant(leaf, {}) is None
+
+    def test_next_pending_sub_dependant_is_matched(self) -> None:
+        leaf, other = _sub_dependants_of_parent()
+        token = patch_module._pending_sub_dependants.set(iter([leaf, other]))
+        try:
+            assert patch_module._caller_sub_dependant(leaf, {}) is leaf
+            assert patch_module._caller_sub_dependant(other, {}) is other
+            assert patch_module._caller_sub_dependant(other, {}) is None
+        finally:
+            patch_module._pending_sub_dependants.reset(token)
+
+    def test_rebuilt_copy_of_an_overridden_dependency_is_matched(self) -> None:
+        (leaf, _) = _sub_dependants_of_parent()
+        rebuilt = get_dependant(path="/", call=_other_leaf, name=leaf.name)
+        token = patch_module._pending_sub_dependants.set(iter([leaf]))
+        try:
+            matched = patch_module._caller_sub_dependant(rebuilt, {_leaf: _other_leaf})
+        finally:
+            patch_module._pending_sub_dependants.reset(token)
+
+        assert matched is leaf
+
+    @pytest.mark.parametrize(
+        ("name", "call"),
+        [("other", _leaf), ("leaf", _other_leaf)],
+        ids=["name differs", "call differs"],
+    )
+    def test_mismatch_is_not_matched(self, name: str, call: Callable[..., Any]) -> None:
+        (leaf, _) = _sub_dependants_of_parent()
+        received = get_dependant(path="/", call=call, name=name)
+        token = patch_module._pending_sub_dependants.set(iter([leaf]))
+        try:
+            assert patch_module._caller_sub_dependant(received, {}) is None
+        finally:
+            patch_module._pending_sub_dependants.reset(token)
+
+    def test_root_call_does_not_consume_pending_sub_dependants(self) -> None:
+        leaf, other = _sub_dependants_of_parent()
+        roots: list[Dependant] = []
+
+        async def solve(**kwargs: Any) -> None:
+            roots.append(kwargs["dependant"])
+
+        pending = iter([leaf, other])
+        token = patch_module._pending_sub_dependants.set(pending)
+        patch_module._original_solve_dependencies = solve
+        try:
+            root = get_dependant(path="/", call=_parent)
+            asyncio.run(
+                patch_module._solve_dependencies_skipping_cached(dependant=root)
+            )
+        finally:
+            patch_module._original_solve_dependencies = None
+            patch_module._pending_sub_dependants.reset(token)
+
+        assert roots == [root]
+        assert next(pending) is leaf

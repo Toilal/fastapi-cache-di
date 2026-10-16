@@ -164,9 +164,5 @@ patches are independent: either can be used without the other.
 
 The values injected into endpoints are unchanged. The only visible difference: a
 `use_cache=False` dependency nested under a cached dependency is no longer called
-again during the skipped walk, whose result was discarded anyway.
-
-!!! note
-    While `dependency_overrides` is not empty, requests are solved exactly as
-    without the patch: FastAPI then rebuilds every sub-dependency, which no longer
-    carries the key the cached value is stored under.
+again during the skipped walk, whose result was discarded anyway. It works the
+same with `dependency_overrides` set, as in most test suites.

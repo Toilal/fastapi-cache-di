@@ -47,8 +47,9 @@ is independent of it: either pair can be used without the other.
 import copy
 import inspect
 import logging
-from collections.abc import Awaitable, Callable, Iterator
+from collections.abc import Awaitable, Callable, Iterator, Mapping
 from contextlib import contextmanager
+from contextvars import ContextVar
 from types import ModuleType
 from typing import Any
 
@@ -479,31 +480,65 @@ def _request_cache_key(dependant: Dependant, uses_scopes_cache: Any) -> Any:
     return dependant.cache_key
 
 
+# The sub-dependants of the dependant being solved, not yet handed to the
+# recursion. FastAPI calls ``solve_dependencies`` exactly once per
+# sub-dependant, in the order of ``dependant.dependencies``, so each recursive
+# call takes the next one.
+_pending_sub_dependants: ContextVar[Iterator[Dependant] | None] = ContextVar(
+    "fastapi_cache_di_pending_sub_dependants", default=None
+)
+
+
+def _caller_sub_dependant(
+    received: Dependant, overrides: Mapping[Any, Any]
+) -> Dependant | None:
+    """The sub-dependant the caller checks its cache with, when it can be matched.
+
+    With overrides set, FastAPI hands every recursive call a ``Dependant``
+    rebuilt from that sub-dependant: the copy always has ``use_cache=True`` and
+    drops its own ``Security`` scopes, so only the original carries the key the
+    caller looks up.
+    """
+    pending = _pending_sub_dependants.get()
+    if pending is None:
+        return None
+    original = next(pending, None)
+    if original is None or original.name != received.name:
+        return None
+    if overrides.get(original.call, original.call) is not received.call:
+        return None
+    return original
+
+
 async def _solve_dependencies_skipping_cached(**kwargs: Any) -> Any:
-    dependant: Dependant = kwargs["dependant"]
+    received: Dependant = kwargs["dependant"]
     cache = kwargs.get("dependency_cache")
-    provider = kwargs.get("dependency_overrides_provider")
-    # With overrides set, FastAPI rebuilds every sub-dependant, overridden or
-    # not: the rebuilt one always has ``use_cache=True`` and drops its own
-    # ``Security`` scopes, so its key may differ from the one the caller checks,
-    # and an early return would feed the caller empty values.
-    if (
-        cache
-        and dependant.use_cache
-        and not getattr(provider, "dependency_overrides", None)
-        and _request_cache_key(dependant, kwargs.get("_uses_scopes_cache")) in cache
-    ):
-        return _dep_utils.SolvedDependency(
-            values={},
-            errors=[],
-            background_tasks=kwargs.get("background_tasks"),
-            response=kwargs["response"],
-            dependency_cache=cache,
-        )
+    # Only recursive calls get a cache: a root call must not consume the
+    # pending sub-dependants of a solve it happens to run inside.
+    if cache is not None:
+        provider = kwargs.get("dependency_overrides_provider")
+        overrides = getattr(provider, "dependency_overrides", None) or {}
+        original = _caller_sub_dependant(received, overrides)
+        if (
+            original is not None
+            and original.use_cache
+            and _request_cache_key(original, kwargs.get("_uses_scopes_cache")) in cache
+        ):
+            return _dep_utils.SolvedDependency(
+                values={},
+                errors=[],
+                background_tasks=kwargs.get("background_tasks"),
+                response=kwargs["response"],
+                dependency_cache=cache,
+            )
     # A request already past the global lookup when unpatch runs still lands
     # here; the global then holds FastAPI's function again.
-    original = _original_solve_dependencies or _dep_utils.solve_dependencies
-    return await original(**kwargs)
+    solve = _original_solve_dependencies or _dep_utils.solve_dependencies
+    token = _pending_sub_dependants.set(iter(received.dependencies))
+    try:
+        return await solve(**kwargs)
+    finally:
+        _pending_sub_dependants.reset(token)
 
 
 def patch_fastapi_solve_dependencies() -> bool:
@@ -516,9 +551,7 @@ def patch_fastapi_solve_dependencies() -> bool:
     request's ``dependency_cache`` is no longer solved again: FastAPI reuses the
     cached value, as it already did after the walk. The values injected into
     endpoints are unchanged; a ``use_cache=False`` dependency nested under a
-    cached one is no longer called during that discarded walk. While
-    ``dependency_overrides`` is not empty, requests are solved as without the
-    patch.
+    cached one is no longer called during that discarded walk.
 
     Returns ``True`` on the first call, ``False`` if already patched. Raises
     :class:`RuntimeError` on a FastAPI that no longer exposes either function,

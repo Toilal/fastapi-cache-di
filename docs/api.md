@@ -75,8 +75,7 @@ patch_fastapi_solve_dependencies() -> bool
 Skip re-walking the sub-tree of dependencies already solved for a request.
 Replaces `solve_dependencies` in `fastapi.dependencies.utils` and
 `fastapi.routing`; meant to stay active for the app's lifetime, independently of
-the dependency cache. While `dependency_overrides` is not empty, requests are
-solved as without the patch.
+the dependency cache.
 
 **Returns** `True` on the first call, `False` if already patched.
 
