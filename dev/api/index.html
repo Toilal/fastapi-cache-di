@@ -601,8 +601,9 @@ nested block does not unpatch and destroy the still-wanted outer cache.</p>
 <h2 id="patch_fastapi_deps_cache"><code>patch_fastapi_deps_cache</code><a class="headerlink" href="#patch_fastapi_deps_cache" title="Permanent link">&para;</a></h2>
 <div class="language-python highlight"><pre><span></span><code><span id="__span-2-1"><a id="__codelineno-2-1" name="__codelineno-2-1" href="#__codelineno-2-1"></a><span class="n">patch_fastapi_deps_cache</span><span class="p">(</span><span class="n">deps_cache</span><span class="p">:</span> <span class="n">DepsCache</span> <span class="o">|</span> <span class="kc">None</span> <span class="o">=</span> <span class="kc">None</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="nb">bool</span>
 </span></code></pre></div>
-<p>Install caching wrappers for <code>get_typed_signature</code>, <code>get_dependant</code> and
-<code>get_flat_dependant</code>. Call it <strong>once</strong>, before the app loads its routes.</p>
+<p>Install caching wrappers for <code>get_typed_signature</code>, <code>get_dependant</code> and, on
+FastAPI ≤ 0.140, <code>get_flat_dependant</code>. Call it <strong>once</strong>, before the app loads
+its routes.</p>
 <p><strong>Parameters</strong></p>
 <ul>
 <li><code>deps_cache</code>: a <code>DepsCache</code> instance to use as backing store. If <code>None</code>
@@ -615,7 +616,7 @@ and a warning is logged.</p>
 <div class="language-python highlight"><pre><span></span><code><span id="__span-3-1"><a id="__codelineno-3-1" name="__codelineno-3-1" href="#__codelineno-3-1"></a><span class="n">unpatch_fastapi_deps_cache</span><span class="p">()</span> <span class="o">-&gt;</span> <span class="nb">bool</span>
 </span></code></pre></div>
 <p>Restore the original FastAPI functions and free cache memory. Logs a hit/miss
-summary at <code>INFO</code> level. An internally-created cache is cleared; a caller-owned
+summary of the patched functions at <code>INFO</code> level. An internally-created cache is cleared; a caller-owned
 cache is left populated (entries and counters) for post-hoc inspection.</p>
 <p><strong>Returns</strong> <code>True</code> if unpatched, <code>False</code> if not currently patched.</p>
 <h2 id="depscache"><code>DepsCache</code><a class="headerlink" href="#depscache" title="Permanent link">&para;</a></h2>
@@ -647,7 +648,7 @@ caller-owned cache still exposes its effectiveness after <code>unpatch</code>.</
 <tr>
 <td><code>flat_dependants</code></td>
 <td><code>dict[tuple, Dependant]</code></td>
-<td><code>get_flat_dependant</code> results, keyed by <code>(id(dependant), parent_oauth_scopes)</code></td>
+<td><code>get_flat_dependant</code> results, keyed by <code>(id(dependant), parent_oauth_scopes)</code>; always empty on FastAPI ≥ 0.141</td>
 </tr>
 <tr>
 <td><code>sig_hits</code>, <code>sig_misses</code></td>
@@ -662,7 +663,7 @@ caller-owned cache still exposes its effectiveness after <code>unpatch</code>.</
 <tr>
 <td><code>flat_hits</code>, <code>flat_misses</code></td>
 <td><code>int</code></td>
-<td><code>get_flat_dependant</code> cache hits / misses</td>
+<td><code>get_flat_dependant</code> cache hits / misses; always 0 on FastAPI ≥ 0.141</td>
 </tr>
 </tbody>
 </table>

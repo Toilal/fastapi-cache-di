@@ -351,10 +351,10 @@
     <ul class="md-nav__list" data-md-component="toc" data-md-scrollfix>
       
         <li class="md-nav__item">
-  <a href="#the-three-cached-functions" class="md-nav__link">
+  <a href="#the-cached-functions" class="md-nav__link">
     <span class="md-ellipsis">
       <span class="md-typeset">
-        The three cached functions
+        The cached functions
       </span>
     </span>
   </a>
@@ -480,10 +480,10 @@
     <ul class="md-nav__list" data-md-component="toc" data-md-scrollfix>
       
         <li class="md-nav__item">
-  <a href="#the-three-cached-functions" class="md-nav__link">
+  <a href="#the-cached-functions" class="md-nav__link">
     <span class="md-ellipsis">
       <span class="md-typeset">
-        The three cached functions
+        The cached functions
       </span>
     </span>
   </a>
@@ -574,16 +574,16 @@
 
 
 <h1 id="how-it-works">How it works<a class="headerlink" href="#how-it-works" title="Permanent link">&para;</a></h1>
-<p><code>patch_fastapi_deps_cache()</code> replaces three functions in
+<p><code>patch_fastapi_deps_cache()</code> replaces up to three functions in
 <code>fastapi.dependencies.utils</code> (plus the <code>fastapi.routing</code> and
 <code>fastapi.openapi.utils</code> re-imports) with caching wrappers backed by a
 <a href=".././api/#depscache"><code>DepsCache</code></a>. <code>unpatch_fastapi_deps_cache()</code> restores the
 originals.</p>
-<h2 id="the-three-cached-functions">The three cached functions<a class="headerlink" href="#the-three-cached-functions" title="Permanent link">&para;</a></h2>
+<h2 id="the-cached-functions">The cached functions<a class="headerlink" href="#the-cached-functions" title="Permanent link">&para;</a></h2>
 <p>FastAPI introspects every route's dependency tree at startup with no caching.
 Shared dependencies (an auth check, a DB handle, a role guard …) are
-re-introspected from scratch for every route that uses them. The three functions
-on that hot path, and how each is keyed:</p>
+re-introspected from scratch for every route that uses them. The functions on
+that hot path, and how each is keyed:</p>
 <table>
 <thead>
 <tr>
@@ -604,16 +604,19 @@ on that hot path, and how each is keyed:</p>
 <td>avoid redundant tree introspection</td>
 </tr>
 <tr>
-<td><code>get_flat_dependant</code></td>
+<td><code>get_flat_dependant</code> (FastAPI ≤ 0.140)</td>
 <td><code>(id(dependant), parent_oauth_scopes)</code></td>
-<td>the dominant startup cost</td>
+<td>the dominant startup cost on those versions</td>
 </tr>
 </tbody>
 </table>
-<p><code>get_flat_dependant</code> is the dominant cost: FastAPI calls it once per route in
-<code>APIRoute.__init__</code> to flatten the dependency tree, recursing through every
-sub-dependency without caching. Caching the recursive results turns
-<code>O(routes × tree-depth)</code> into <code>O(routes + unique-deps)</code>.</p>
+<p>On FastAPI ≤ 0.140, <code>get_flat_dependant</code> is the dominant cost: FastAPI calls it
+once per route in <code>APIRoute.__init__</code> to flatten the dependency tree, recursing
+through every sub-dependency without caching. Caching the recursive results
+turns <code>O(routes × tree-depth)</code> into <code>O(routes + unique-deps)</code>.</p>
+<p>FastAPI 0.141 removed <code>get_flat_dependant</code>: it now flattens the tree with
+iterative walks that build no <code>Dependant</code>, so only <code>get_typed_signature</code> and
+<code>get_dependant</code> are cached there.</p>
 <h2 id="where-the-patch-is-applied">Where the patch is applied<a class="headerlink" href="#where-the-patch-is-applied" title="Permanent link">&para;</a></h2>
 <p>Each function is patched in every module that holds its own reference:</p>
 <ul>
@@ -622,15 +625,15 @@ sub-dependency without caching. Caching the recursive results turns
 <li><strong><code>get_dependant</code></strong> — patched in <code>fastapi.dependencies.utils</code> (for the
   recursive calls) and in <code>fastapi.routing</code> (which imports its own reference).</li>
 <li><strong><code>get_flat_dependant</code></strong> — patched in <code>fastapi.dependencies.utils</code>
-  (self-recursive calls), <code>fastapi.openapi.utils</code> (all versions), and
-  <code>fastapi.routing</code>. <code>routing</code> only imports <code>get_flat_dependant</code> from FastAPI
-  0.112.4 onwards, so it is patched there only if present (and remembered, to be
-  restored on unpatch).</li>
+  (self-recursive calls), <code>fastapi.openapi.utils</code> and <code>fastapi.routing</code>, but
+  only in the modules that actually define it; the patched modules are
+  remembered and restored on unpatch. Nothing is patched from FastAPI 0.141,
+  where the function no longer exists: no attribute is ever injected into a
+  FastAPI module.</li>
 </ul>
-<p>The <code>openapi.utils</code> patch is effectively a no-op on current FastAPI: both call
-sites there pass <code>skip_repeats=True</code>, which the wrapper short-circuits straight
-to the original without caching. It is installed for symmetry and as a safety
-net.</p>
+<p>The <code>openapi.utils</code> patch is effectively a no-op: both call sites there pass
+<code>skip_repeats=True</code>, which the wrapper short-circuits straight to the original
+without caching. It is installed for symmetry and as a safety net.</p>
 <h2 id="copy-on-return-semantics">Copy-on-return semantics<a class="headerlink" href="#copy-on-return-semantics" title="Permanent link">&para;</a></h2>
 <p>Some <code>Dependant</code> list fields are mutated by FastAPI <strong>after</strong> introspection
 returns (route-level parameterless dependencies inserted during routing, and on
