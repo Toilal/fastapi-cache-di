@@ -10,9 +10,11 @@ from fastapi_cache_di import (
     is_loop_safe,
     loop_safe,
     patch_fastapi_deps_cache,
+    patch_fastapi_resolution_plan,
     patch_fastapi_run_in_threadpool,
     patch_fastapi_solve_dependencies,
     unpatch_fastapi_deps_cache,
+    unpatch_fastapi_resolution_plan,
     unpatch_fastapi_run_in_threadpool,
     unpatch_fastapi_solve_dependencies,
 )
@@ -149,7 +151,36 @@ optimization.
 unpatch_fastapi_solve_dependencies() -> bool
 ```
 
-Restore FastAPI's `solve_dependencies` in both modules.
+Restore FastAPI's `solve_dependencies` in both modules. `fastapi.routing` keeps
+the patched function while `patch_fastapi_resolution_plan` is active.
+
+**Returns** `True` if unpatched, `False` if not currently patched.
+
+## `patch_fastapi_resolution_plan`
+
+```python
+patch_fastapi_resolution_plan() -> bool
+```
+
+Solve each route's dependencies from a plan compiled on its first request, and
+compiled again when `dependency_overrides` change. Replaces `solve_dependencies`
+in `fastapi.routing`, the root call of HTTP routes, WebSocket routes and route
+groups; meant to stay active for the app's lifetime, independently of the other
+patches.
+
+**Returns** `True` on the first call, `False` if already patched.
+
+**Raises** `RuntimeError` on a FastAPI version missing a function the plan
+calls.
+
+## `unpatch_fastapi_resolution_plan`
+
+```python
+unpatch_fastapi_resolution_plan() -> bool
+```
+
+Solve routes recursively again, as FastAPI does. `fastapi.routing` keeps the
+sub-tree skip while `patch_fastapi_solve_dependencies` is active.
 
 **Returns** `True` if unpatched, `False` if not currently patched.
 

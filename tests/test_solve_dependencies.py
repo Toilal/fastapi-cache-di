@@ -2,7 +2,6 @@
 
 import asyncio
 import dataclasses
-import inspect
 import threading
 from collections.abc import AsyncIterator, Callable, Iterator
 from pathlib import Path
@@ -12,6 +11,7 @@ import fastapi.dependencies.utils as _dep_utils
 import fastapi.routing as _routing
 import httpx
 import pytest
+from _compat import requires_dependency_scope, requires_route_groups
 from fastapi import (
     APIRouter,
     BackgroundTasks,
@@ -39,11 +39,6 @@ from fastapi_cache_di import (
 from fastapi_cache_di import patch as patch_module
 
 _FASTAPI_SOLVE_DEPENDENCIES = _dep_utils.solve_dependencies
-
-requires_dependency_scope = pytest.mark.skipif(
-    "scope" not in inspect.signature(Depends).parameters,
-    reason="Depends(scope=...) arrived in FastAPI 0.121",
-)
 
 
 @pytest.fixture(autouse=True)
@@ -144,7 +139,7 @@ class TestPatchUnpatch:
         patch_fastapi_solve_dependencies()
 
         assert _dep_utils.solve_dependencies is not _FASTAPI_SOLVE_DEPENDENCIES
-        assert _routing.solve_dependencies is _dep_utils.solve_dependencies
+        assert _routing.solve_dependencies is patch_module._route_solve_dependencies
 
     def test_unpatch_restores_the_original_of_each_module(self) -> None:
         async def other(**kwargs: Any) -> Any:
@@ -643,10 +638,7 @@ class TestSameResults:
         assert receive() == unpatched
         assert built == ["db", "db"]
 
-    @pytest.mark.skipif(
-        not hasattr(APIRouter, "frontend"),
-        reason="route groups (APIRouter.frontend) are not in this FastAPI",
-    )
+    @requires_route_groups
     def test_route_group_dependencies(self, tmp_path: Path) -> None:
         (tmp_path / "index.html").write_text("<html></html>")
         built: list[str] = []

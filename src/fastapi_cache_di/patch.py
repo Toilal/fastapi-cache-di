@@ -50,6 +50,12 @@ dependency shared across a deep tree is re-solved at every occurrence. The patch
 returns early for a sub-dependency whose value is already cached; the caller then
 reuses that value through its own cache check. It is a lifetime patch too, and
 independent of both other pairs.
+
+:func:`patch_fastapi_resolution_plan` goes further: it compiles each route's
+dependency tree once into a flat plan
+(:mod:`fastapi_cache_di.plan`) and solves every request from it, without
+walking the tree. It shares ``fastapi.routing.solve_dependencies`` with
+:func:`patch_fastapi_solve_dependencies`, so either can be removed first.
 """
 
 import copy
@@ -62,7 +68,6 @@ from types import ModuleType
 from typing import Any
 
 import fastapi
-import fastapi.dependencies.models as _dep_models
 import fastapi.dependencies.utils as _dep_utils
 import fastapi.openapi.utils as _openapi_utils
 import fastapi.routing as _routing
@@ -70,8 +75,10 @@ from fastapi.dependencies.models import Dependant
 from fastapi.utils import get_path_param_names
 from starlette.concurrency import run_in_threadpool
 
+from fastapi_cache_di import plan as _plan
 from fastapi_cache_di.cache import DepsCache
 from fastapi_cache_di.execution import is_loop_safe
+from fastapi_cache_di.plan import request_cache_key as _request_cache_key
 
 logger = logging.getLogger(__name__)
 
@@ -561,17 +568,6 @@ def unpatch_fastapi_run_in_threadpool() -> bool:
 # ---------------------------------------------------------------------------
 
 _original_solve_dependencies: Callable[..., Awaitable[Any]] | None = None
-_original_routing_solve_dependencies: Callable[..., Awaitable[Any]] | None = None
-
-# The key FastAPI stores a solved value under: a function from FastAPI 0.140,
-# ``Dependant.cache_key`` before (a dataclass field, then a ``cached_property``).
-_get_cache_key: Callable[..., Any] | None = getattr(_dep_models, "_get_cache_key", None)
-
-
-def _request_cache_key(dependant: Dependant, uses_scopes_cache: Any) -> Any:
-    if _get_cache_key is not None:
-        return _get_cache_key(dependant=dependant, uses_scopes_cache=uses_scopes_cache)
-    return dependant.cache_key
 
 
 # The sub-dependants of the dependant being solved, not yet handed to the
@@ -641,53 +637,147 @@ def patch_fastapi_solve_dependencies() -> bool:
     Replaces ``solve_dependencies`` in ``fastapi.dependencies.utils``, whose
     recursion looks this module global up at every call, and in
     ``fastapi.routing``, which imports it by name for HTTP routes, WebSocket
-    routes and route groups. A sub-dependency whose value is already in the
-    request's ``dependency_cache`` is no longer solved again: FastAPI reuses the
-    cached value, as it already did after the walk. The values injected into
-    endpoints are unchanged; a ``use_cache=False`` dependency nested under a
-    cached one is no longer called during that discarded walk.
+    routes and route groups (see :func:`_route_solve_dependencies`). A
+    sub-dependency whose value is already in the request's ``dependency_cache``
+    is no longer solved again: FastAPI reuses the cached value, as it already
+    did after the walk. The values injected into endpoints are unchanged; a
+    ``use_cache=False`` dependency nested under a cached one is no longer
+    called during that discarded walk.
 
     Returns ``True`` on the first call, ``False`` if already patched. Raises
     :class:`RuntimeError` on a FastAPI that no longer exposes either function,
     rather than silently losing the optimization.
     """
-    global _original_solve_dependencies, _original_routing_solve_dependencies
+    global _original_solve_dependencies
 
-    missing = [
-        module.__name__
-        for module in (_dep_utils, _routing)
-        if not hasattr(module, "solve_dependencies")
-    ]
-    if missing:
-        raise RuntimeError(
-            f"patch_fastapi_solve_dependencies: FastAPI {fastapi.__version__} no "
-            f"longer defines solve_dependencies in {', '.join(missing)}; this "
-            "version is not supported. Remove the patch or pin a supported "
-            "FastAPI version."
-        )
+    _require_solve_dependencies("patch_fastapi_solve_dependencies")
 
     if _original_solve_dependencies is not None:
         return False
 
     _original_solve_dependencies = _dep_utils.solve_dependencies
-    _original_routing_solve_dependencies = _routing.solve_dependencies  # type: ignore[attr-defined]
     _dep_utils.solve_dependencies = _solve_dependencies_skipping_cached
-    _routing.solve_dependencies = _solve_dependencies_skipping_cached  # type: ignore[attr-defined]
+    _claim_routing_solve_dependencies()
     return True
 
 
 def unpatch_fastapi_solve_dependencies() -> bool:
     """Restore FastAPI's ``solve_dependencies`` in both modules.
 
+    ``fastapi.routing`` keeps the patched function while
+    :func:`patch_fastapi_resolution_plan` is active.
+
     Returns ``True`` if unpatched, ``False`` if not currently patched.
     """
-    global _original_solve_dependencies, _original_routing_solve_dependencies
+    global _original_solve_dependencies
 
     if _original_solve_dependencies is None:
         return False
 
     _dep_utils.solve_dependencies = _original_solve_dependencies  # type: ignore[assignment]
-    _routing.solve_dependencies = _original_routing_solve_dependencies  # type: ignore[attr-defined,assignment]
     _original_solve_dependencies = None
-    _original_routing_solve_dependencies = None
+    _release_routing_solve_dependencies()
+    return True
+
+
+def _require_solve_dependencies(caller: str, *names: str) -> None:
+    missing = [
+        f"{module.__name__}.solve_dependencies"
+        for module in (_dep_utils, _routing)
+        if not hasattr(module, "solve_dependencies")
+    ]
+    missing += [f"{_dep_utils.__name__}.{name}" for name in names]
+    if missing:
+        raise RuntimeError(
+            f"{caller}: FastAPI {fastapi.__version__} no longer defines "
+            f"{', '.join(missing)}; this version is not supported. Remove the "
+            "patch or pin a supported FastAPI version."
+        )
+
+
+# ---------------------------------------------------------------------------
+# fastapi.routing.solve_dependencies: one function for both patches
+# ---------------------------------------------------------------------------
+
+_original_routing_solve_dependencies: Callable[..., Awaitable[Any]] | None = None
+_resolution_plan_active = False
+
+
+async def _route_solve_dependencies(**kwargs: Any) -> Any:
+    """The root call of every route while either per-request patch is active.
+
+    Owning ``fastapi.routing.solve_dependencies`` jointly lets each patch be
+    removed in any order without removing the other one.
+    """
+    if _resolution_plan_active:
+        return await _plan.solve_dependencies(**kwargs)
+    return await _dep_utils.solve_dependencies(**kwargs)
+
+
+def _claim_routing_solve_dependencies() -> None:
+    global _original_routing_solve_dependencies
+
+    if _original_routing_solve_dependencies is None:
+        _original_routing_solve_dependencies = _routing.solve_dependencies  # type: ignore[attr-defined]
+        _routing.solve_dependencies = _route_solve_dependencies  # type: ignore[attr-defined]
+
+
+def _release_routing_solve_dependencies() -> None:
+    global _original_routing_solve_dependencies
+
+    if _resolution_plan_active or _original_solve_dependencies is not None:
+        return
+    if _original_routing_solve_dependencies is not None:
+        _routing.solve_dependencies = _original_routing_solve_dependencies  # type: ignore[attr-defined,assignment]
+        _original_routing_solve_dependencies = None
+
+
+# ---------------------------------------------------------------------------
+# Resolution plan: solve each route from a plan compiled once
+# ---------------------------------------------------------------------------
+
+
+def patch_fastapi_resolution_plan() -> bool:
+    """Solve each route's dependencies from a plan compiled on its first request.
+
+    Replaces ``solve_dependencies`` in ``fastapi.routing``, the root call of
+    HTTP routes, WebSocket routes and route groups. The first request of a
+    route compiles its dependency tree into a flat plan (see
+    :mod:`fastapi_cache_di.plan`); every request then runs that plan instead of
+    walking the tree recursively. The plan is compiled again when
+    ``dependency_overrides`` change. Values, errors, the request cache and the
+    exit order of ``yield`` dependencies are FastAPI's; like
+    :func:`patch_fastapi_solve_dependencies`, a ``use_cache=False`` dependency
+    nested under an already solved dependency is not called again.
+
+    Independent of the other pairs. Returns ``True`` on the first call,
+    ``False`` if already patched. Raises :class:`RuntimeError` on a FastAPI
+    missing a function the plan calls.
+    """
+    global _resolution_plan_active
+
+    _require_solve_dependencies(
+        "patch_fastapi_resolution_plan", *_plan.missing_internals()
+    )
+
+    if _resolution_plan_active:
+        return False
+
+    _resolution_plan_active = True
+    _claim_routing_solve_dependencies()
+    return True
+
+
+def unpatch_fastapi_resolution_plan() -> bool:
+    """Solve routes recursively again, as FastAPI does.
+
+    Returns ``True`` if unpatched, ``False`` if not currently patched.
+    """
+    global _resolution_plan_active
+
+    if not _resolution_plan_active:
+        return False
+
+    _resolution_plan_active = False
+    _release_routing_solve_dependencies()
     return True

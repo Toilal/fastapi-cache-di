@@ -131,8 +131,8 @@ reuses the value, so no FastAPI code is copied.
 - **Patch points** — `fastapi.dependencies.utils.solve_dependencies` (the
   recursion looks this module global up at every call) and
   `fastapi.routing.solve_dependencies` (imported by name; HTTP routes, WebSocket
-  routes and route groups). The root call never receives a cache, so it is never
-  skipped.
+  routes and route groups), which it shares with the resolution plan (see
+  below). The root call never receives a cache, so it is never skipped.
 - **Cache key** — it must be the exact key FastAPI stores the value under: a
   dataclass field before FastAPI 0.121, `Dependant.cache_key` as a
   `cached_property` up to 0.139, and `fastapi.dependencies.models._get_cache_key` from 0.140,
@@ -150,3 +150,58 @@ reuses the value, so no FastAPI code is copied.
 - **Guards** — tests fail if FastAPI stops resolving the recursion through the
   module global, changes the fields of `SolvedDependency`, keys its request cache
   differently, or stops recursing once per sub-dependant in order.
+
+## Solving routes from a precompiled plan
+
+`patch_fastapi_resolution_plan()` replaces the recursion itself.
+`fastapi_cache_di.plan.compile_plan` flattens a route's dependency tree into
+*frames* (a dependant whose own parameters are extracted after its
+sub-dependencies) and *steps* (one per occurrence of a sub-dependency), in
+FastAPI's evaluation order: depth first, sub-dependencies in the order of
+`dependant.dependencies`. Each step carries, precomputed, its request cache key,
+the kind of its callable (coroutine, sync, sync or async generator), its stack
+scope, and each frame its non-empty parameter fields, special parameters
+(`Request`, `WebSocket`, `HTTPConnection`, `Response`, `BackgroundTasks`,
+`SecurityScopes`) and OAuth scopes. At request time, the plan runs the steps in
+a single loop.
+
+- **Patch point** — `fastapi.routing.solve_dependencies`, the root call. One
+  dispatcher owns it while either the plan or the sub-tree skip is active: it
+  runs the plan when the plan is active, and the current
+  `fastapi.dependencies.utils.solve_dependencies` (the skip wrapper or FastAPI)
+  otherwise. The first patch saves FastAPI's original, the last unpatch
+  restores it, in any order. `Dependant.call` is never rewritten, so the
+  override lookup and the cache keys stay FastAPI's.
+- **FastAPI helpers** — the functions the plan calls (`request_params_to_args`,
+  `request_body_to_args`, `run_in_threadpool`, the generator helper,
+  `solve_dependencies`) are looked up on `fastapi.dependencies.utils` at call
+  time, as FastAPI does, so `patch_fastapi_run_in_threadpool()` still applies.
+- **Repeated occurrences** — a repeated occurrence of a `use_cache=True`
+  dependency is a step that reads the request cache. Its value is missing only
+  when its first occurrence failed validation; FastAPI then solves it again and
+  reports its errors once more, so the step hands that sub-tree to
+  `fastapi.dependencies.utils.solve_dependencies`, which duplicates the errors
+  exactly like FastAPI.
+- **Overrides** — the plan is compiled with `dependency_overrides` applied,
+  rebuilding every sub-dependant with `get_dependant` like FastAPI, with the
+  scope arguments of each version. The snapshot of the overrides (pairs compared
+  by identity) is checked at every request, immediately when the dict is empty.
+  The rebuilt sub-trees are not kept: frames and steps only keep the values they
+  read, and a repeated occurrence keeps the `get_dependant` arguments to rebuild
+  its dependant on the error path only.
+- **Storage** — `Dependant` cannot carry the plan: from FastAPI 0.140 it is a
+  slotted dataclass, without room for an extra attribute nor weak references.
+  The plans are stored on the route's `dependency_overrides_provider` (the app),
+  keyed by `id()` of the root dependant with a strong reference to it (the same
+  protection as [`id()` recycling protection](#id-recycling-protection)), so
+  they are freed with the app. A root call without a provider is solved by
+  FastAPI.
+- **Versions** — differences between FastAPI versions are confined to a few
+  adapters chosen from the fields of `Dependant` and the functions FastAPI
+  defines: the cache key, the OAuth scopes, the callable kind, the exit stacks
+  (per scope from 0.121) and the `get_dependant` scope arguments.
+- **Guards** — an equivalence test compares the plan with FastAPI on a
+  reference tree (values, errors, request cache, call and exit order) on every
+  version of the compatibility matrix, and a benchmark gate requires the plan to
+  be at least twice as fast as the sub-tree skip on a tree of 100 dependencies
+  and 211 edges.
