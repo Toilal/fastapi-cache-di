@@ -32,6 +32,7 @@ from fastapi import (
     WebSocket,
 )
 from fastapi.dependencies.models import Dependant
+from fastapi.requests import HTTPConnection
 from fastapi.routing import APIRoute
 from fastapi.security import SecurityScopes
 from fastapi.testclient import TestClient
@@ -467,6 +468,58 @@ class TestSameResults:
 
         assert _run(build, [_get("/")]) == unpatched
 
+    def test_a_repeated_occurrence_takes_what_fastapi_solves_and_caches(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        called: list[str] = []
+
+        def page(size: int) -> int:
+            return size
+
+        def listing(value: Annotated[int, Depends(page)]) -> int:
+            called.append("listing")
+            return value
+
+        def other() -> str:
+            called.append("other")
+            return "other"
+
+        app = FastAPI()
+
+        @app.get("/")
+        async def endpoint(
+            first: Annotated[int, Depends(listing)],
+            again: Annotated[int, Depends(listing)],
+            later: Annotated[str, Depends(other)],
+        ) -> None:
+            pass
+
+        later_key = plan_module.request_cache_key(
+            _route_of(app).dependant.dependencies[2], {}
+        )
+
+        async def solved_on_second_try(**kwargs: Any) -> Any:
+            kwargs["dependency_cache"][later_key] = "cached"
+            return _dep_utils.SolvedDependency(
+                values={"value": 5},
+                errors=[],
+                background_tasks=kwargs["background_tasks"],
+                response=kwargs["response"],
+                dependency_cache=kwargs["dependency_cache"],
+            )
+
+        monkeypatch.setattr(_dep_utils, "solve_dependencies", solved_on_second_try)
+        patch_fastapi_resolution_plan()
+        solved: list[Any] = []
+
+        with _root_results(solved), TestClient(app) as client:
+            assert client.get("/").status_code == 422
+
+        (result,) = solved
+        assert result.values == {"again": 5, "later": "cached"}
+        assert len(result.errors) == 1
+        assert called == ["listing"]
+
     @pytest.mark.parametrize("scope", ["request", "function"])
     def test_yield_dependencies_exit_in_the_same_order_when_the_endpoint_raises(
         self, scope: str
@@ -617,6 +670,21 @@ class TestSameResults:
 
         assert receive() == unpatched == ["repo(db)", "db"]
         assert built == ["db", "db"]
+
+    def test_http_connection_parameter_of_a_dependency(self) -> None:
+        def build() -> FastAPI:
+            def client_path(connection: HTTPConnection) -> str:
+                return connection.url.path
+
+            app = FastAPI()
+
+            @app.get("/where")
+            async def endpoint(path: Annotated[str, Depends(client_path)]) -> str:
+                return path
+
+            return app
+
+        _same_with_and_without_plan(build, _get("/where"))
 
     def test_routes_of_included_routers(
         self, recursive_solves: list[Callable[..., Any]]
@@ -784,6 +852,34 @@ class TestOverrides:
         assert _run(build, _REFERENCE_REQUESTS) == unpatched
         assert events == unpatched_events
 
+    def test_dependants_shared_by_the_deps_cache(self) -> None:
+        def build() -> FastAPI:
+            def leaf() -> int:
+                return 1
+
+            def middle(value: Annotated[int, Depends(leaf)]) -> int:
+                return value + 1
+
+            app = FastAPI()
+            with fastapi_deps_cache():
+
+                @app.get("/")
+                async def endpoint(
+                    cached: Annotated[int, Depends(middle)],
+                    fresh: Annotated[int, Depends(middle, use_cache=False)],
+                ) -> list[int]:
+                    return [cached, fresh]
+
+            app.dependency_overrides[_unrelated] = lambda: "fake"
+            return app
+
+        shared = {
+            id(sub.dependencies[0]) for sub in _route_of(build()).dependant.dependencies
+        }
+        assert len(shared) == 1
+
+        _same_with_and_without_plan(build, _get("/"))
+
 
 def _unrelated() -> str:
     return "real"
@@ -838,6 +934,34 @@ class TestCompilation:
             client.get("/")
 
         assert compilations == [{}, {_unrelated: fake}, {_unrelated: _unrelated}]
+
+    def test_routes_without_an_app_are_solved_by_fastapi(
+        self, recursive_solves: list[Callable[..., Any]]
+    ) -> None:
+        def build() -> FastAPI:
+            def db() -> str:
+                return "db"
+
+            router = APIRouter()
+
+            @router.get("/")
+            async def endpoint(dal: Annotated[str, Depends(db)]) -> str:
+                return dal
+
+            app = FastAPI()
+            app.mount("/router", router)
+            return app
+
+        def get() -> Any:
+            with TestClient(build()) as client:
+                return client.get("/router/").json()
+
+        unpatched = get()
+        recursive_solves.clear()
+        patch_fastapi_resolution_plan()
+
+        assert get() == unpatched == "db"
+        assert [call.__name__ for call in recursive_solves] == ["endpoint", "db"]
 
     def test_no_plan_without_an_app_to_store_it_on(self) -> None:
         app = _shared_tree([])
