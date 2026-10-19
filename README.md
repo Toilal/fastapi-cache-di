@@ -36,13 +36,20 @@ users = APIRouter()
 orders = APIRouter()
 billing = APIRouter()
 
-with fastapi_deps_cache():
+with fastapi_deps_cache(warm_up=app):
     # Registering routes introspects each dependency tree; caching is active here.
     app.include_router(users)
     app.include_router(orders)
     app.include_router(billing)
-# originals restored here; cache memory freed
+# included routes built, originals restored here; cache memory freed
 ```
+
+`warm_up=app` matters from FastAPI 0.137: `include_router` no longer builds the
+included routes, FastAPI builds them on the first request through each included
+router (or the first `/openapi.json`), after the block has exited and without
+the cache. `warm_up` builds them when the block exits normally, while the cache
+is still active. It has no effect before FastAPI 0.137.2, and does not cover
+routes added after the block, mounted sub-applications or `frontend()` routes.
 
 Manual patch/unpatch, sharing and inspecting the cache, and the cache-key details
 are covered in the documentation.

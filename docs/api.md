@@ -21,7 +21,11 @@ from fastapi_cache_di import (
 ## `fastapi_deps_cache`
 
 ```python
-fastapi_deps_cache(*, deps_cache: DepsCache | bool = True) -> ContextManager[None]
+fastapi_deps_cache(
+    *,
+    deps_cache: DepsCache | bool = True,
+    warm_up: FastAPI | APIRouter | None = None,
+) -> ContextManager[None]
 ```
 
 Context manager that enables dependency caching for the block's duration and
@@ -31,9 +35,15 @@ restores FastAPI's originals on exit.
 
 - `deps_cache`:
     - `True` (default) — use a temporary cache scoped to this context.
-    - `False` — no-op; caching is disabled.
+    - `False` — no-op; caching is disabled (`warm_up` is ignored).
     - a `DepsCache` instance — use (and populate) a shared cache that survives
       the block.
+- `warm_up`: an app or router whose included routers' routes are built when the
+  block exits normally, while the cache is still active. From FastAPI 0.137,
+  FastAPI builds them on the first request through each included router
+  instead, after the cache is gone. Mounted sub-applications are not walked:
+  warm each one in its own nested block. No effect on a FastAPI without
+  `fastapi.routing.iter_route_contexts` (before 0.137.2).
 
 The context manager only tears down what it installed: because
 `patch_fastapi_deps_cache` returns `False` when caching is already active, a
