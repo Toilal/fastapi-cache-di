@@ -719,7 +719,11 @@
 </span><span id="__span-0-12"><a id="__codelineno-0-12" name="__codelineno-0-12" href="#__codelineno-0-12"></a><span class="p">)</span>
 </span></code></pre></div>
 <h2 id="fastapi_deps_cache"><code>fastapi_deps_cache</code><a class="headerlink" href="#fastapi_deps_cache" title="Permanent link">&para;</a></h2>
-<div class="language-python highlight"><pre><span></span><code><span id="__span-1-1"><a id="__codelineno-1-1" name="__codelineno-1-1" href="#__codelineno-1-1"></a><span class="n">fastapi_deps_cache</span><span class="p">(</span><span class="o">*</span><span class="p">,</span> <span class="n">deps_cache</span><span class="p">:</span> <span class="n">DepsCache</span> <span class="o">|</span> <span class="nb">bool</span> <span class="o">=</span> <span class="kc">True</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="n">ContextManager</span><span class="p">[</span><span class="kc">None</span><span class="p">]</span>
+<div class="language-python highlight"><pre><span></span><code><span id="__span-1-1"><a id="__codelineno-1-1" name="__codelineno-1-1" href="#__codelineno-1-1"></a><span class="n">fastapi_deps_cache</span><span class="p">(</span>
+</span><span id="__span-1-2"><a id="__codelineno-1-2" name="__codelineno-1-2" href="#__codelineno-1-2"></a>    <span class="o">*</span><span class="p">,</span>
+</span><span id="__span-1-3"><a id="__codelineno-1-3" name="__codelineno-1-3" href="#__codelineno-1-3"></a>    <span class="n">deps_cache</span><span class="p">:</span> <span class="n">DepsCache</span> <span class="o">|</span> <span class="nb">bool</span> <span class="o">=</span> <span class="kc">True</span><span class="p">,</span>
+</span><span id="__span-1-4"><a id="__codelineno-1-4" name="__codelineno-1-4" href="#__codelineno-1-4"></a>    <span class="n">warm_up</span><span class="p">:</span> <span class="n">FastAPI</span> <span class="o">|</span> <span class="n">APIRouter</span> <span class="o">|</span> <span class="kc">None</span> <span class="o">=</span> <span class="kc">None</span><span class="p">,</span>
+</span><span id="__span-1-5"><a id="__codelineno-1-5" name="__codelineno-1-5" href="#__codelineno-1-5"></a><span class="p">)</span> <span class="o">-&gt;</span> <span class="n">ContextManager</span><span class="p">[</span><span class="kc">None</span><span class="p">]</span>
 </span></code></pre></div>
 <p>Context manager that enables dependency caching for the block's duration and
 restores FastAPI's originals on exit.</p>
@@ -727,11 +731,17 @@ restores FastAPI's originals on exit.</p>
 <ul>
 <li><code>deps_cache</code>:<ul>
 <li><code>True</code> (default) — use a temporary cache scoped to this context.</li>
-<li><code>False</code> — no-op; caching is disabled.</li>
+<li><code>False</code> — no-op; caching is disabled (<code>warm_up</code> is ignored).</li>
 <li>a <code>DepsCache</code> instance — use (and populate) a shared cache that survives
   the block.</li>
 </ul>
 </li>
+<li><code>warm_up</code>: an app or router whose included routers' routes are built when the
+  block exits normally, while the cache is still active. From FastAPI 0.137,
+  FastAPI builds them on the first request through each included router
+  instead, after the cache is gone. Mounted sub-applications are not walked:
+  warm each one in its own nested block. No effect on a FastAPI without
+  <code>fastapi.routing.iter_route_contexts</code> (before 0.137.2).</li>
 </ul>
 <p>The context manager only tears down what it installed: because
 <code>patch_fastapi_deps_cache</code> returns <code>False</code> when caching is already active, a
