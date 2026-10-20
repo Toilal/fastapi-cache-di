@@ -427,6 +427,17 @@
   
 </li>
       
+        <li class="md-nav__item">
+  <a href="#solving-routes-from-a-precompiled-plan" class="md-nav__link">
+    <span class="md-ellipsis">
+      <span class="md-typeset">
+        Solving routes from a precompiled plan
+      </span>
+    </span>
+  </a>
+  
+</li>
+      
     </ul>
   
 </nav>
@@ -572,6 +583,17 @@
     <span class="md-ellipsis">
       <span class="md-typeset">
         Skipping cached sub-trees at request time
+      </span>
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#solving-routes-from-a-precompiled-plan" class="md-nav__link">
+    <span class="md-ellipsis">
+      <span class="md-typeset">
+        Solving routes from a precompiled plan
       </span>
     </span>
   </a>
@@ -754,8 +776,8 @@ reuses the value, so no FastAPI code is copied.</p>
 <li><strong>Patch points</strong> — <code>fastapi.dependencies.utils.solve_dependencies</code> (the
   recursion looks this module global up at every call) and
   <code>fastapi.routing.solve_dependencies</code> (imported by name; HTTP routes, WebSocket
-  routes and route groups). The root call never receives a cache, so it is never
-  skipped.</li>
+  routes and route groups), which it shares with the resolution plan (see
+  below). The root call never receives a cache, so it is never skipped.</li>
 <li><strong>Cache key</strong> — it must be the exact key FastAPI stores the value under: a
   dataclass field before FastAPI 0.121, <code>Dependant.cache_key</code> as a
   <code>cached_property</code> up to 0.139, and <code>fastapi.dependencies.models._get_cache_key</code> from 0.140,
@@ -773,6 +795,60 @@ reuses the value, so no FastAPI code is copied.</p>
 <li><strong>Guards</strong> — tests fail if FastAPI stops resolving the recursion through the
   module global, changes the fields of <code>SolvedDependency</code>, keys its request cache
   differently, or stops recursing once per sub-dependant in order.</li>
+</ul>
+<h2 id="solving-routes-from-a-precompiled-plan">Solving routes from a precompiled plan<a class="headerlink" href="#solving-routes-from-a-precompiled-plan" title="Permanent link">&para;</a></h2>
+<p><code>patch_fastapi_resolution_plan()</code> replaces the recursion itself.
+<code>fastapi_cache_di.plan.compile_plan</code> flattens a route's dependency tree into
+<em>frames</em> (a dependant whose own parameters are extracted after its
+sub-dependencies) and <em>steps</em> (one per occurrence of a sub-dependency), in
+FastAPI's evaluation order: depth first, sub-dependencies in the order of
+<code>dependant.dependencies</code>. Each step carries, precomputed, its request cache key,
+the kind of its callable (coroutine, sync, sync or async generator), its stack
+scope, and each frame its non-empty parameter fields, special parameters
+(<code>Request</code>, <code>WebSocket</code>, <code>HTTPConnection</code>, <code>Response</code>, <code>BackgroundTasks</code>,
+<code>SecurityScopes</code>) and OAuth scopes. At request time, the plan runs the steps in
+a single loop.</p>
+<ul>
+<li><strong>Patch point</strong> — <code>fastapi.routing.solve_dependencies</code>, the root call. One
+  dispatcher owns it while either the plan or the sub-tree skip is active: it
+  runs the plan when the plan is active, and the current
+  <code>fastapi.dependencies.utils.solve_dependencies</code> (the skip wrapper or FastAPI)
+  otherwise. The first patch saves FastAPI's original, the last unpatch
+  restores it, in any order. <code>Dependant.call</code> is never rewritten, so the
+  override lookup and the cache keys stay FastAPI's.</li>
+<li><strong>FastAPI helpers</strong> — the functions the plan calls (<code>request_params_to_args</code>,
+  <code>request_body_to_args</code>, <code>run_in_threadpool</code>, the generator helper,
+  <code>solve_dependencies</code>) are looked up on <code>fastapi.dependencies.utils</code> at call
+  time, as FastAPI does, so <code>patch_fastapi_run_in_threadpool()</code> still applies.</li>
+<li><strong>Repeated occurrences</strong> — a repeated occurrence of a <code>use_cache=True</code>
+  dependency is a step that reads the request cache. Its value is missing only
+  when its first occurrence failed validation; FastAPI then solves it again and
+  reports its errors once more, so the step hands that sub-tree to
+  <code>fastapi.dependencies.utils.solve_dependencies</code>, which duplicates the errors
+  exactly like FastAPI.</li>
+<li><strong>Overrides</strong> — the plan is compiled with <code>dependency_overrides</code> applied,
+  rebuilding every sub-dependant with <code>get_dependant</code> like FastAPI, with the
+  scope arguments of each version. The snapshot of the overrides (pairs compared
+  by identity) is checked at every request, immediately when the dict is empty.
+  The rebuilt sub-trees are not kept: frames and steps only keep the values they
+  read, and a repeated occurrence keeps the <code>get_dependant</code> arguments to rebuild
+  its dependant on the error path only.</li>
+<li><strong>Storage</strong> — <code>Dependant</code> cannot carry the plan: from FastAPI 0.140 it is a
+  slotted dataclass, without room for an extra attribute nor weak references.
+  The plans are stored on the route's <code>dependency_overrides_provider</code> (the app),
+  keyed by <code>id()</code> of the root dependant with a strong reference to it (the same
+  protection as <a href="#id-recycling-protection"><code>id()</code> recycling protection</a>), so
+  they are freed with the app. A root call without a provider is solved by
+  FastAPI.</li>
+<li><strong>Versions</strong> — differences between FastAPI versions are confined to a few
+  adapters chosen from the fields of <code>Dependant</code> and the functions FastAPI
+  defines: the cache key, the OAuth scopes, the callable kind, the exit stacks
+  (per scope from 0.121) and the <code>get_dependant</code> scope arguments.</li>
+<li><strong>Guards</strong> — an equivalence test compares the plan with FastAPI on a
+  reference tree (values, errors, request cache, call and exit order) on every
+  version of the compatibility matrix, and a benchmark gate requires the plan to
+  be at least twice as fast as the sub-tree skip on a tree of 100 dependencies
+  and 211 edges.</li>
 </ul>
 
 

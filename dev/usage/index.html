@@ -407,6 +407,17 @@
   
 </li>
       
+        <li class="md-nav__item">
+  <a href="#solving-routes-from-a-precompiled-plan" class="md-nav__link">
+    <span class="md-ellipsis">
+      <span class="md-typeset">
+        Solving routes from a precompiled plan
+      </span>
+    </span>
+  </a>
+  
+</li>
+      
     </ul>
   
 </nav>
@@ -590,6 +601,17 @@
   
 </li>
       
+        <li class="md-nav__item">
+  <a href="#solving-routes-from-a-precompiled-plan" class="md-nav__link">
+    <span class="md-ellipsis">
+      <span class="md-typeset">
+        Solving routes from a precompiled plan
+      </span>
+    </span>
+  </a>
+  
+</li>
+      
     </ul>
   
 </nav>
@@ -635,10 +657,11 @@ while FastAPI introspects your routes' dependency trees — that is, while route
 are being included / routes registered — and torn down afterwards.</p>
 <p>There are three ways to drive it: the context manager, manual patch/unpatch, and
 a caller-owned shared cache you can inspect afterwards.</p>
-<p>Separately, two opt-in runtime patches cut per-request costs, see
-<a href="#calling-loop-safe-dependencies-inline">Calling loop-safe dependencies inline</a>
+<p>Separately, three opt-in runtime patches cut per-request costs, see
+<a href="#calling-loop-safe-dependencies-inline">Calling loop-safe dependencies inline</a>,
+<a href="#skipping-the-sub-tree-of-cached-dependencies">Skipping the sub-tree of cached dependencies</a>
 and
-<a href="#skipping-the-sub-tree-of-cached-dependencies">Skipping the sub-tree of cached dependencies</a>.</p>
+<a href="#solving-routes-from-a-precompiled-plan">Solving routes from a precompiled plan</a>.</p>
 <h2 id="context-manager-recommended">Context manager (recommended)<a class="headerlink" href="#context-manager-recommended" title="Permanent link">&para;</a></h2>
 <p><code>fastapi_deps_cache</code> enables caching for the duration of the block, then restores
 FastAPI's originals and frees the cache memory on exit:</p>
@@ -870,6 +893,58 @@ cache, it is meant to stay active for the app's lifetime:</p>
 <code>use_cache=False</code> dependency nested under a cached dependency is no longer called
 again during the skipped walk, whose result was discarded anyway. It works the
 same with <code>dependency_overrides</code> set, as in most test suites.</p>
+<h2 id="solving-routes-from-a-precompiled-plan">Solving routes from a precompiled plan<a class="headerlink" href="#solving-routes-from-a-precompiled-plan" title="Permanent link">&para;</a></h2>
+<p>Even with the sub-tree skip, FastAPI still walks the dependency tree
+recursively at every request, and recomputes for each dependency what only
+depends on the route: its cache key, whether it is a coroutine, a generator or
+a plain function, which request parameters it reads. On routes with about a
+hundred dependencies, that framework work outweighs the dependencies
+themselves.</p>
+<p><code>patch_fastapi_resolution_plan()</code> compiles each route's dependency tree once,
+at the route's first request, into a flat plan in FastAPI's evaluation order,
+then solves every request of that route from the plan in a single loop. On a
+route of 100 dependencies and 211 edges, solving a request takes about a tenth
+of the time it takes with the sub-tree skip alone. It is opt-in, and stays
+active for the app's lifetime; <code>unpatch_fastapi_resolution_plan()</code> restores
+FastAPI's recursive walk.</p>
+<div class="language-python highlight"><pre><span></span><code><span id="__span-7-1"><a id="__codelineno-7-1" name="__codelineno-7-1" href="#__codelineno-7-1"></a><span class="kn">from</span><span class="w"> </span><span class="nn">fastapi</span><span class="w"> </span><span class="kn">import</span> <span class="n">FastAPI</span>
+</span><span id="__span-7-2"><a id="__codelineno-7-2" name="__codelineno-7-2" href="#__codelineno-7-2"></a>
+</span><span id="__span-7-3"><a id="__codelineno-7-3" name="__codelineno-7-3" href="#__codelineno-7-3"></a><span class="kn">from</span><span class="w"> </span><span class="nn">fastapi_cache_di</span><span class="w"> </span><span class="kn">import</span> <span class="n">patch_fastapi_resolution_plan</span>
+</span><span id="__span-7-4"><a id="__codelineno-7-4" name="__codelineno-7-4" href="#__codelineno-7-4"></a>
+</span><span id="__span-7-5"><a id="__codelineno-7-5" name="__codelineno-7-5" href="#__codelineno-7-5"></a><span class="n">patch_fastapi_resolution_plan</span><span class="p">()</span>
+</span><span id="__span-7-6"><a id="__codelineno-7-6" name="__codelineno-7-6" href="#__codelineno-7-6"></a>
+</span><span id="__span-7-7"><a id="__codelineno-7-7" name="__codelineno-7-7" href="#__codelineno-7-7"></a><span class="n">app</span> <span class="o">=</span> <span class="n">FastAPI</span><span class="p">()</span>
+</span></code></pre></div>
+<p>The values injected into endpoints, the validation errors (including the ones a
+dependency reports at each of its occurrences), the request's dependency cache
+and the exit order of <code>yield</code> dependencies are the ones FastAPI produces. Like
+the sub-tree skip, a <code>use_cache=False</code> dependency nested under an already solved
+dependency is not called again.</p>
+<ul>
+<li><strong>Overrides</strong> — the plan is compiled with <code>dependency_overrides</code> applied, and
+  compiled again when they change, so a test suite that sets overrides is solved
+  by the plan too. A route keeps one plan without overrides and one for the last
+  overrides it saw. A plan only keeps what it reads at request time, not the
+  sub-trees FastAPI rebuilds under overrides: a few tens of KiB for a route of
+  100 dependencies, with or without overrides.</li>
+<li><strong>Storage</strong> — a route's plans are stored on its app and freed with it. A
+  dependency tree changed after the route's first request is not compiled
+  again.</li>
+<li><strong>Combining</strong> — it is independent of the other patches. Combined with
+  <code>patch_fastapi_solve_dependencies()</code>, either can be removed first; the plan
+  takes over while both are active. Sync dependencies still go through
+  <code>patch_fastapi_run_in_threadpool()</code> when it is active.</li>
+</ul>
+<div class="admonition warning">
+<p class="admonition-title">Warning</p>
+<p>The plan reproduces FastAPI internals (<code>solve_dependencies</code>, its request
+cache keys and its evaluation order). The test suite compares the plan with
+FastAPI on a reference dependency tree for every FastAPI version of the
+compatibility matrix, and a benchmark gate fails the pipeline if the plan
+stops being at least twice as fast as the sub-tree skip. The patch raises a
+<code>RuntimeError</code> on a FastAPI version that no longer defines a function the
+plan calls.</p>
+</div>
 
 
 
