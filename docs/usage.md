@@ -8,10 +8,11 @@ are being included / routes registered — and torn down afterwards.
 There are three ways to drive it: the context manager, manual patch/unpatch, and
 a caller-owned shared cache you can inspect afterwards.
 
-Separately, two opt-in runtime patches cut per-request costs, see
-[Calling loop-safe dependencies inline](#calling-loop-safe-dependencies-inline)
+Separately, three opt-in runtime patches cut per-request costs, see
+[Calling loop-safe dependencies inline](#calling-loop-safe-dependencies-inline),
+[Skipping the sub-tree of cached dependencies](#skipping-the-sub-tree-of-cached-dependencies)
 and
-[Skipping the sub-tree of cached dependencies](#skipping-the-sub-tree-of-cached-dependencies).
+[Solving routes from a precompiled plan](#solving-routes-from-a-precompiled-plan).
 
 ## Context manager (recommended)
 
@@ -258,3 +259,59 @@ The values injected into endpoints are unchanged. The only visible difference: a
 `use_cache=False` dependency nested under a cached dependency is no longer called
 again during the skipped walk, whose result was discarded anyway. It works the
 same with `dependency_overrides` set, as in most test suites.
+
+## Solving routes from a precompiled plan
+
+Even with the sub-tree skip, FastAPI still walks the dependency tree
+recursively at every request, and recomputes for each dependency what only
+depends on the route: its cache key, whether it is a coroutine, a generator or
+a plain function, which request parameters it reads. On routes with about a
+hundred dependencies, that framework work outweighs the dependencies
+themselves.
+
+`patch_fastapi_resolution_plan()` compiles each route's dependency tree once,
+at the route's first request, into a flat plan in FastAPI's evaluation order,
+then solves every request of that route from the plan in a single loop. On a
+route of 100 dependencies and 211 edges, solving a request takes about a tenth
+of the time it takes with the sub-tree skip alone. It is opt-in, and stays
+active for the app's lifetime; `unpatch_fastapi_resolution_plan()` restores
+FastAPI's recursive walk.
+
+```python
+from fastapi import FastAPI
+
+from fastapi_cache_di import patch_fastapi_resolution_plan
+
+patch_fastapi_resolution_plan()
+
+app = FastAPI()
+```
+
+The values injected into endpoints, the validation errors (including the ones a
+dependency reports at each of its occurrences), the request's dependency cache
+and the exit order of `yield` dependencies are the ones FastAPI produces. Like
+the sub-tree skip, a `use_cache=False` dependency nested under an already solved
+dependency is not called again.
+
+- **Overrides** — the plan is compiled with `dependency_overrides` applied, and
+  compiled again when they change, so a test suite that sets overrides is solved
+  by the plan too. A route keeps one plan without overrides and one for the last
+  overrides it saw. A plan only keeps what it reads at request time, not the
+  sub-trees FastAPI rebuilds under overrides: a few tens of KiB for a route of
+  100 dependencies, with or without overrides.
+- **Storage** — a route's plans are stored on its app and freed with it. A
+  dependency tree changed after the route's first request is not compiled
+  again.
+- **Combining** — it is independent of the other patches. Combined with
+  `patch_fastapi_solve_dependencies()`, either can be removed first; the plan
+  takes over while both are active. Sync dependencies still go through
+  `patch_fastapi_run_in_threadpool()` when it is active.
+
+!!! warning
+    The plan reproduces FastAPI internals (`solve_dependencies`, its request
+    cache keys and its evaluation order). The test suite compares the plan with
+    FastAPI on a reference dependency tree for every FastAPI version of the
+    compatibility matrix, and a benchmark gate fails the pipeline if the plan
+    stops being at least twice as fast as the sub-tree skip. The patch raises a
+    `RuntimeError` on a FastAPI version that no longer defines a function the
+    plan calls.

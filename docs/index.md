@@ -65,8 +65,8 @@ registered, and FastAPI's original functions are restored when the block exits.
 
 See the [usage guide](./usage.md) for manual patching, sharing and inspecting a
 cache, thread-safety notes, and the opt-in runtime patches that call loop-safe
-dependencies on the event loop and skip re-walking the sub-tree of dependencies
-already cached for a request. See [how it works](./how-it-works.md) for the
+dependencies on the event loop, skip re-walking the sub-tree of dependencies
+already cached for a request, and solve each route from a plan compiled once. See [how it works](./how-it-works.md) for the
 caching internals, and the [API reference](./api.md) for the full public API.
 
 Requirements

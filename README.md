@@ -124,6 +124,32 @@ app = FastAPI()
 The values injected into endpoints are unchanged; see the documentation for the
 details.
 
+## Solving routes from a precompiled plan
+
+Even with the sub-tree skip, FastAPI still walks the dependency tree
+recursively at every request, and recomputes for each dependency what only
+depends on the route: its cache key, the kind of its callable, the request
+parameters it reads. `patch_fastapi_resolution_plan()` compiles each route's
+dependency tree once, at the route's first request, into a flat plan in
+FastAPI's evaluation order, then solves every request of that route from the
+plan in a single loop. It is opt-in and stays active for the app's lifetime:
+
+```python
+from fastapi import FastAPI
+
+from fastapi_cache_di import patch_fastapi_resolution_plan
+
+patch_fastapi_resolution_plan()
+
+app = FastAPI()
+```
+
+On a route of 100 dependencies and 211 edges, solving a request takes about a
+tenth of the time it takes with the sub-tree skip alone. The injected values,
+the validation errors, the request's dependency cache and the exit order of
+`yield` dependencies are the ones FastAPI produces, with `dependency_overrides`
+too; see the documentation for the details.
+
 ## Documentation
 
 Full documentation is available at
