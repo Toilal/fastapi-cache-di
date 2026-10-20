@@ -49,6 +49,9 @@ jobs:
     if: github.event_name == 'push' || github.event.pull_request.head.repo.full_name != github.repository
 
     runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      id-token: write
 
     name: FastAPI ${{ matrix.fastapi-version }}
 
@@ -86,7 +89,15 @@ jobs:
         # Exclude the timing-sensitive startup benchmark; it is gated once, on
         # the current FastAPI, in the dedicated `benchmark` job. Replicating it
         # across the version matrix on shared runners only adds flakiness.
-        run: uv run --no-sync pytest -m "not benchmark"
+        run: uv run --no-sync pytest --cov=fastapi_cache_di --cov-report=xml -m "not benchmark"
+
+      - name: Codecov
+        # Version-specific branches only run on their FastAPI versions: Codecov
+        # merges these reports with the `ci` job's to measure them.
+        uses: codecov/codecov-action@v7
+        with:
+          use_oidc: true
+          flags: fastapi-${{ matrix.fastapi-version }}
 
   pre-commit:
     if: github.event_name == 'push' || github.event.pull_request.head.repo.full_name != github.repository
