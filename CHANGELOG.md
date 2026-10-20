@@ -2,6 +2,21 @@
 
 <!-- version list -->
 
+## v0.4.0 (2026-10-20)
+
+### Bug Fixes
+
+- Build included routers' routes under the deps cache with warm_up
+  ([#19](https://github.com/Toilal/fastapi-cache-di/pull/19),
+  [`24e5c75`](https://github.com/Toilal/fastapi-cache-di/commit/24e5c7563f52ec4202baaa908255758817aedda8))
+
+### Features
+
+- Solve route dependencies from a plan compiled once per route
+  ([#20](https://github.com/Toilal/fastapi-cache-di/pull/20),
+  [`913674b`](https://github.com/Toilal/fastapi-cache-di/commit/913674b296a1ba2b177ec0d4dd9a4cc86906a017))
+
+
 ## v0.3.0 (2026-10-16)
 
 ### Bug Fixes
