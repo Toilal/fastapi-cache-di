@@ -66,6 +66,7 @@ import fastapi.dependencies.models as _dep_models
 import fastapi.dependencies.utils as _dep_utils
 import fastapi.openapi.utils as _openapi_utils
 import fastapi.routing as _routing
+from fastapi import APIRouter, FastAPI
 from fastapi.dependencies.models import Dependant
 from fastapi.utils import get_path_param_names
 from starlette.concurrency import run_in_threadpool
@@ -432,10 +433,23 @@ def unpatch_fastapi_deps_cache() -> bool:
     return True
 
 
+def _warm_up_routes(router: FastAPI | APIRouter) -> None:
+    # From FastAPI 0.137, an included router's routes are built lazily, on the
+    # first request through it. Walking their contexts builds them now. Before
+    # 0.137.2 there is no public way to walk them, and before 0.137 nothing is
+    # deferred.
+    iter_route_contexts = getattr(_routing, "iter_route_contexts", None)
+    if iter_route_contexts is None:
+        return
+    for _ in iter_route_contexts(router.routes):
+        pass
+
+
 @contextmanager
 def fastapi_deps_cache(
     *,
     deps_cache: DepsCache | bool = True,
+    warm_up: FastAPI | APIRouter | None = None,
 ) -> Iterator[None]:
     """Context manager that enables dependency caching for the block's duration.
 
@@ -443,17 +457,26 @@ def fastapi_deps_cache(
     ----------
     deps_cache:
         - ``True`` (default): use a temporary cache scoped to this context.
-        - ``False``: no-op, caching is disabled.
+        - ``False``: no-op, caching is disabled (``warm_up`` is ignored).
         - A :class:`DepsCache` instance: use (and populate) a shared cache.
+    warm_up:
+        An app or router whose included routers' routes are built when the
+        block exits normally, while the cache is still active. From FastAPI
+        0.137, FastAPI builds them on the first request through each included
+        router instead, after the cache is gone. Mounted sub-applications are
+        not walked: warm each one in its own nested block. No effect on a
+        FastAPI without ``fastapi.routing.iter_route_contexts`` (before
+        0.137.2).
 
     Usage::
 
-        with fastapi_deps_cache():
+        app = FastAPI()
+        with fastapi_deps_cache(warm_up=app):
             app.include_router(...)  # or however routes are loaded
 
         # Or with a shared cache:
         cache = DepsCache()
-        with fastapi_deps_cache(deps_cache=cache):
+        with fastapi_deps_cache(deps_cache=cache, warm_up=app):
             app.include_router(...)
     """
     if deps_cache is False:
@@ -467,6 +490,8 @@ def fastapi_deps_cache(
     patched = patch_fastapi_deps_cache(deps_cache=dc)
     try:
         yield
+        if warm_up is not None:
+            _warm_up_routes(warm_up)
     finally:
         if patched:
             unpatch_fastapi_deps_cache()

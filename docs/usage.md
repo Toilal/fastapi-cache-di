@@ -27,10 +27,10 @@ app = FastAPI()
 users = APIRouter()
 orders = APIRouter()
 
-with fastapi_deps_cache():
+with fastapi_deps_cache(warm_up=app):
     app.include_router(users)
     app.include_router(orders)
-# originals restored here; cache memory freed
+# included routes built, originals restored here; cache memory freed
 ```
 
 The `deps_cache` keyword controls the backing store:
@@ -45,6 +45,33 @@ The `deps_cache` keyword controls the backing store:
 with fastapi_deps_cache(deps_cache=False):
     app.include_router(users)
 ```
+
+### Warming up included routers
+
+From FastAPI 0.137, `include_router` no longer copies the included routes into
+the app: it adds a wrapper, and FastAPI builds the effective routes on the first
+request through each included router (or the first `/openapi.json`). That build
+introspects every dependency tree again, after the block has exited and without
+the cache, so the first request is as slow as without the library.
+
+`warm_up` takes the app (or an `APIRouter`) whose included routes are built when
+the block exits normally, while the cache is still active:
+
+```python
+with fastapi_deps_cache(warm_up=app):
+    app.include_router(users)
+```
+
+- It relies on `fastapi.routing.iter_route_contexts`, and has no effect on a
+  FastAPI that lacks it (before 0.137.2). Before 0.137, nothing is deferred.
+- It does not run when the block raises; the exception propagates unchanged.
+- Routes added after the block, routes of mounted sub-applications
+  (`app.mount(...)`) and `frontend()` routes are still built on first use,
+  without the cache: warm a mounted FastAPI app with its own nested
+  `fastapi_deps_cache(warm_up=subapp)` block.
+- It is ignored with `deps_cache=False`.
+- Nested in another block, or under an active `patch_fastapi_deps_cache()`, it
+  runs with that cache.
 
 !!! note
     The context manager is safe to nest. `patch_fastapi_deps_cache` is a no-op

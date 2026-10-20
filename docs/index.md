@@ -52,12 +52,12 @@ users = APIRouter()
 orders = APIRouter()
 billing = APIRouter()
 
-with fastapi_deps_cache():
+with fastapi_deps_cache(warm_up=app):
     # Registering routes introspects each dependency tree; caching is active here.
     app.include_router(users)
     app.include_router(orders)
     app.include_router(billing)
-# originals restored here; cache memory freed
+# included routes built, originals restored here; cache memory freed
 ```
 
 That is all it takes: introspection results are memoized while routes are being
